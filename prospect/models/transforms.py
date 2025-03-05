@@ -10,6 +10,7 @@ They can be used as ``"depends_on"`` entries in parameter specifications.
 
 import numpy as np
 from ..sources.constants import cosmo
+import warnings
 #from gp_sfh import *
 #import gp_sfh_kernels
 
@@ -24,7 +25,9 @@ __all__ = ["stellar_logzsol", "delogify_mass",
            #"get_sfr_covar", "sfr_covar_to_sfr_ratio_covar",
            "zred_to_agebins_pbeta",
            "zredmassmet_to_zred", "zredmassmet_to_logmass", "zredmassmet_to_mass", "zredmassmet_to_logzsol",
-           "nzsfh_to_zred", "nzsfh_to_logmass", "nzsfh_to_mass", "nzsfh_to_logzsol", "nzsfh_to_logsfr_ratios"]
+           "nzsfh_to_zred", "nzsfh_to_logmass", "nzsfh_to_mass", "nzsfh_to_logzsol", "nzsfh_to_logsfr_ratios",
+           "create_masses_ssSFH", "create_agebins_ssSFH",
+          ]
 
 
 # --------------------------------------
@@ -562,52 +565,154 @@ def nzsfh_to_logzsol(nzsfh=None, **extras):
 
 def nzsfh_to_logsfr_ratios(nzsfh=None, **extras):
     return nzsfh[3:]
-    
-    
-# --------------------------------------
-# --- Transforms for stochastic SFH prior ---
-# --------------------------------------
-
-# def get_sfr_covar(psd_params, agebins=[], **extras):
-    
-#     """
-#     Caluclates SFR covariance matrix for a given set of PSD parameters and agebins
-#     PSD parameters must be in the order: [sigma_reg, tau_eq, tau_in, sigma_dyn, tau_dyn]
-    
-#     Returns
-#     -------
-#     covar_matrix: (Nbins, Nbins)-dim array of covariance values for SFR
-#     """
-
-#     bincenters = np.array([np.mean(agebins[i]) for i in range(len(agebins))])
-#     bincenters = (10**bincenters)/1e9
-#     case1 = simple_GP_sfh()
-#     case1.tarr = bincenters
-#     case1.kernel = gp_sfh_kernels.extended_regulator_model_kernel_paramlist
-#     covar_matrix = case1.get_covariance_matrix(kernel_params = psd_params, show_prog=False)
-    
-#     return covar_matrix
 
 
-# def sfr_covar_to_sfr_ratio_covar(covar_matrix):
+# --------------------------------------------
+# --- Transforms for simple sinusoidal sfh ---
+# --------------------------------------------
     
-#     """
-#     Caluclates log SFR ratio covariance matrix from SFR covariance matrix
     
-#     Returns
-#     -------
-#     sfr_ratio_covar: (Nbins-1, Nbins-1)-dim array of covariance values for log SFR
-#     """
+def create_nbins_ssSFH(dt, zred):
+    """
+    Calculate the number of bins based on the age of the universe and a given time step.
+
+    Args:
+        - dt: float, the time step in Myr.
+        - zred: float, redshift.
+
+    Returns:
+        - nbins: int, the total number of bins calculated based on the age of the universe and the time step.
+    """
+    t_univ = cosmo.age(zred).value * 1e9 # age of the universe in years
+    nbins = 0.85 * t_univ / (dt * 1e6)
+    nbins = np.around(nbins, decimals=0).astype(int)
+    return nbins + 1
+
+def create_agebins_ssSFH(dt=40, phi=0.0, zred=0, **extras):
+    """
+    Create age bins based on specified parameters, including bin size and redshift.
+
+    Args:
+        - dt: float or array, the size of the age bins in Myrs.
+        - phi: float or array, the phase.
+        - zred: float or array, the redshift.
+
+    Returns:
+        - agebins: np.array or list of np.arrays, the calculated age bins in log space.
+
+    Warnings:
+        - If the first bin size is less than 1 Myr, a warning will be issued (fsps may crash if you continue!!!).
+    """
+
+    # Ensure inputs are iterable if they are scalars
+    if np.isscalar(dt):
+        dt = np.array([dt])
+    if np.isscalar(phi):
+        phi = np.array([phi])
+    if np.isscalar(zred):
+        zred = np.array([zred])
+
+    agebins_list = []
+
+    for d, p, z in zip(dt, phi, zred):
+        dt_yrs = d * 1e6
+        nbins = create_nbins_ssSFH(d, z) 
+        t_univ = cosmo.age(z).value * 1e9  # Age of the universe in years
+
+        agelims = np.ones((nbins+1,))
+
+        # Determine bin size adjustment based on phi
+        perc_size = 1 - p/np.pi if p/np.pi < 1 else 2 - p/np.pi
+        first_bin_size = dt_yrs * perc_size  # first bin size in log years
+
+        if first_bin_size < 1e6:
+            warnings.warn("Warning... The first bin size for this phi and dt is less than 1 Myr -- `prospector` will throw an error.")
     
-#     dim = covar_matrix.shape[0]
+        agelims[1] = first_bin_size
+        agelims[2:] = first_bin_size + dt_yrs * np.arange(1, nbins)
+        agelims[-1] = t_univ  # fixing last age to be the age of the universe at the specified redshift
+        agelims[-2] = 0.85 * t_univ  # fixing second to last age to be 85% of the age of the universe at the specified redshift
+
+        log_agelims = np.log10(agelims)
+        agebins = np.array([log_agelims[:-1], log_agelims[1:]]).T
+        
+        agebins_list.append(agebins)    
+
+    return agebins_list[0] if len(agebins_list) == 1 else agebins_list
+
+def apply_powerlaw_to_masses_ssSFH(agebins, masses, alpha, phi,t_crit=500):
+        """
+        Applies power-law modification to one or more mass arrays using a vectorized approach.
     
-#     sfr_ratio_covar = []
+        Args:
+            - agebins: (N_bins, 2) array, age bin boundaries (log(yrs))
+            - masses: (N_bins) array, mass formed in each age bin (Msun)
+            - t_crit: critical time in Myr for the power-law application (default: 500 Myr)
+        
+        Returns:
+            - masses: (N_bins) or (N_mass_arrays, N_bins), mass arrays with power-law modification applied
+        """
+        times = 10 ** np.unique(agebins.flatten())[:-1]  # Times in years on front edge of age bins
+        times_fine = np.linspace(np.min(times), np.max(times), int(1e6))  # Fine-grained time array (yrs)
+        times_fine_powerlaw = times_fine[times_fine < t_crit * 1e6]  # Times below the critical time in yrs
+        
+        # interpolation of SFR over fine-grained time steps
+        masses_fine = np.interp(times_fine, times, masses)            
+        # Apply power-law modification for times < t_crit across all mass arrays
+        masses_fine[1:len(times_fine_powerlaw)] *= times_fine_powerlaw[1:] ** alpha # leaving the first bin alone to avoid infinity
+        masses_fine[len(times_fine_powerlaw):] *= t_crit ** alpha 
     
-#     for i in range(dim-1):
-#         row = []
-#         for j in range(dim-1):
-#             cov = covar_matrix[i][j] - covar_matrix[i+1][j] - covar_matrix[i][j+1] + covar_matrix[i+1][j+1]
-#             row.append(cov)
-#         sfr_ratio_covar.append(row)
+        # Interpolate the modified SFRs back to the original sparse time steps for all mass arrays
+        masses = np.interp(times, times_fine, masses_fine)
+
+        return masses 
+
+
+def create_masses_ssSFH(dt=40, sigma=0.3, alpha=0.0, phi=0.0, logmass=10, zred=0.0, SFMS=-8.8, **extras):
+    """
+    Create mass vector from the ssSFH hyperparameters.
+
+    Args:
+        - zred (float, optional): Redshift of the object.
+        - logmass (float): log mass of object.
+        - dt (float): Size of age bins in Myr.
+        - sigma (float): Amplitude of SFH around star forming MS in dex.
+        - alpha (float): Power-law index for rising SFH.
+        - log_sSFR (float): Log specific star formation rate for the star forming MS in log(yr^-1).
+        
+    Returns:
+        - masses: np.array, the calculated mass values for each age bin, adjusted based on parameters.
+    """
     
-#     return np.array(sfr_ratio_covar)
+    nbins = create_nbins_ssSFH(dt, zred)  # Ensure this returns an integer
+    agebins = create_agebins_ssSFH(dt, phi, zred)
+    
+    max_SFR = 10 ** (SFMS + sigma + logmass)
+    min_SFR = 10 ** (SFMS - sigma + logmass)
+    
+    dt_last_bin = np.diff(10 ** agebins)[-1][0]
+    max_mass = max_SFR * dt * 1e6
+    min_mass = min_SFR * dt * 1e6
+    
+    masses = np.zeros(nbins)
+    
+    if phi < np.pi:  # star forming phi
+        masses[::2] = max_mass
+        masses[1::2] = min_mass
+        masses[-1] = min_SFR * dt_last_bin if nbins % 2 == 0 else max_SFR * dt_last_bin
+    else:  # quiescent phi
+        masses[::2] = min_mass
+        masses[1::2] = max_mass
+        masses[-1] = max_SFR * dt_last_bin if nbins % 2 == 0 else min_SFR * dt_last_bin
+    
+    mass_adjust = 1 - phi/np.pi if phi/np.pi < 1 else 2 - phi/np.pi
+    masses[0] *= mass_adjust # Adjust the first bin mass by phi
+    
+    if alpha != 0.0:
+
+        masses = apply_powerlaw_to_masses_ssSFH(agebins,masses,alpha,phi)
+
+    # Ensure masses are non-negative
+    masses = np.clip(masses, a_min=0, a_max=None)
+    
+    return masses

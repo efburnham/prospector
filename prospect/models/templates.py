@@ -16,7 +16,8 @@ __all__ = ["TemplateLibrary",
            "describe",
            "adjust_dirichlet_agebins",
            "adjust_continuity_agebins",
-           "adjust_stochastic_params"
+           "adjust_exreg_stochastic_params",
+           "adjust_arbitrary_stochastic_params"
            ]
 
 
@@ -132,7 +133,10 @@ def adjust_continuity_agebins(parset, tuniv=13.7, nbins=7):
     return parset
 
 
-def adjust_stochastic_params(parset, tuniv=13.7):
+def adjust_exreg_stochastic_params(parset, tuniv=13.7):
+    """
+    Extended regular stochastic model
+    """
     
     agebins = parset['agebins']['init']
     
@@ -149,6 +153,57 @@ def adjust_stochastic_params(parset, tuniv=13.7):
     parset["logsfr_ratios"]["N"] = ncomp - 1
     parset["logsfr_ratios"]["init"] = mean
     parset["logsfr_ratios"]["prior"] = rprior
+
+    return parset
+
+def adjust_arbitrary_stochastic_params(parset, tuniv=13.7):
+    """
+    assumes some parameter "psd" and "psd_times" has been defined by the user in the model parameters.
+    """
+    
+    agebins = parset['agebins']['init']
+    psd = parset['psd']['init']
+    psd_times = parset['psd_times']['init']
+
+    ncomp = len(parset['agebins']['init'])
+    mean = np.zeros(ncomp - 1)
+    ncomp_psd = len(psd)
+    
+    arbitrary_stochasatic_basis = hyperparam_transforms.arbitrary_stochastic_sfh(psd=psd,psd_times=psd_times)
+    logsfr_ratios_covar = arbitrary_stochasatic_basis.get_logsfr_ratios_covariance(agebins=agebins)
+    rprior = priors.MultiVariateNormal(mean=mean, Sigma=logsfr_ratios_covar)
+    
+    parset['mass']['N'] = ncomp
+    parset['agebins']['N'] = ncomp
+    parset["logsfr_ratios"]["N"] = ncomp - 1
+    parset["logsfr_ratios"]["init"] = mean
+    parset["logsfr_ratios"]["prior"] = rprior
+    parset['psd']['N'] = ncomp_psd
+    parset['psd_times']['N'] = ncomp_psd
+
+    return parset
+
+def adjust_simple_sinusoidal_params(parset, tuniv=13.7):
+    """
+    assumes some parameter "psd" and "psd_times" has been defined by the user in the model parameters.
+    """
+    
+    alpha = parset['alpha']['init']
+    sigma = parset['sigma']['init']
+    dt = parset['dt']['init']
+    phi = parset['phi']['init']
+    zred = parset['zred']['init']
+    logmass = parset['logmass']['init']
+    SFMS = parset['SFMS']['init']
+    
+    agebins = transforms.create_agebins_ssSFH(dt=dt,phi=phi,zred=zred)
+    ncomp = len(agebins)
+    mass = transforms.create_masses_ssSFH(dt=dt,phi=phi,zred=zred,alpha=alpha,logmass=logmass,SFMS=SFMS)
+    
+    parset['mass']['N'] = ncomp
+    parset['agebins']['N'] = ncomp
+    parset['mass']['init'] = mass
+    parset['agebins']['init'] = agebins
 
     return parset
 
@@ -687,43 +742,43 @@ TemplateLibrary["dirichlet_sfh"] = (_dirichlet_,
 # ----------------------------
 # A non-parametric SFH model which correlates the SFRs between time bins based on Extended Regulator model in TFC2020
 
-_stochastic_ = TemplateLibrary["ssp"]
-_ = _stochastic_.pop("tage")
+_exreg_stochastic_ = TemplateLibrary["ssp"]
+_ = _exreg_stochastic_.pop("tage")
 
-_stochastic_["sfh"] = {"N": 1, "isfree": False, "init": 3, "units": "FSPS index"}
+_exreg_stochastic_["sfh"] = {"N": 1, "isfree": False, "init": 3, "units": "FSPS index"}
 # This is the *total*  mass formed, as a variable
-_stochastic_["logmass"] = {"N": 1, "isfree": True, "init": 10, 'units': 'Msun',
+_exreg_stochastic_["logmass"] = {"N": 1, "isfree": True, "init": 10, 'units': 'Msun',
                            'prior': priors.TopHat(mini=7, maxi=12)}
 # This will be the mass in each bin.  It depends on other free and fixed
 # parameters.  Its length needs to be modified based on the number of bins
-_stochastic_["mass"] = {'N': 8, 'isfree': False, 'init': 1e6, 'units': r'M$_\odot$',
+_exreg_stochastic_["mass"] = {'N': 8, 'isfree': False, 'init': 1e6, 'units': r'M$_\odot$',
                         'depends_on': transforms.logsfr_ratios_to_masses}
 
 # This gives the start and stop of each age bin.  It can be adjusted and its
 # length must match the lenth of "mass"
 agebins = [[0.0, 6.0], [6.0, 6.5], [6.5, 7.0], [7.0, 7.5], [7.5, 8.0], [8.0, 8.5], [8.5, 9.0], [9.5, 10.0]]
-_stochastic_["agebins"] = {'N': 8, 'isfree': False, 'init': agebins, 'units': 'log(yr)'}
+_exreg_stochastic_["agebins"] = {'N': 8, 'isfree': False, 'init': agebins, 'units': 'log(yr)'}
 
 # Sets the PSD parameters & priors
 # sigma_reg: Overall stochasticity coming from gas inflow
-_stochastic_["sigma_reg"] = {'name': 'sigma_reg', 'N': 1, 'isfree': True, 'init': 0.3,
+_exreg_stochastic_["sigma_reg"] = {'name': 'sigma_reg', 'N': 1, 'isfree': True, 'init': 0.3,
                              'prior': priors.LogUniform(mini=0.01, maxi=5.0), 'units': 'dex^2'}
 # tau_eq: Timescale associated with equilibrium gas cycling in gas reservoir (related to depletion timescale)
-_stochastic_["tau_eq"] = {'name': 'tau_eq', 'N': 1, 'isfree': True, 'init': 2.5,
+_exreg_stochastic_["tau_eq"] = {'name': 'tau_eq', 'N': 1, 'isfree': True, 'init': 2.5,
                           'prior': priors.TopHat(mini=0.01, maxi=7.0), 'units': 'Gyr'}
 # tau_in: Characteristic timescale associated with gas inflow into gas reservoir
-_stochastic_["tau_in"] = {'name': 'tau_in', 'N': 1, 'isfree': False, 'init': 7.0, 'units': 'Gyr'}
+_exreg_stochastic_["tau_in"] = {'name': 'tau_in', 'N': 1, 'isfree': False, 'init': 7.0, 'units': 'Gyr'}
 # sigma_dyn: Overall stochasticity coming from short-term, dynamical processes (e.g., creation/destruction of GMCs)
-_stochastic_["sigma_dyn"] = {'name': 'sigma_dyn', 'N': 1, 'isfree': True, 'init': 0.01,
+_exreg_stochastic_["sigma_dyn"] = {'name': 'sigma_dyn', 'N': 1, 'isfree': True, 'init': 0.01,
                              'prior': priors.LogUniform(mini=0.001, maxi=0.1), 'units': 'dex^2'}
 # tau_dyn: Characteristic timescale associated with short-term, dynamical processes
-_stochastic_["tau_dyn"] = {'name': 'tau_dyn', 'N': 1, 'isfree': True, 'init': 0.025,
+_exreg_stochastic_["tau_dyn"] = {'name': 'tau_dyn', 'N': 1, 'isfree': True, 'init': 0.025,
                            'prior': priors.ClippedNormal(mini=0.005, maxi=0.2, mean=0.01, sigma=0.02), 'units': 'Gyr'}
 
-_stochastic_["logsfr_ratios"] = {'N': 7, 'isfree': True, 'init': [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+_exreg_stochastic_["logsfr_ratios"] = {'N': 7, 'isfree': True, 'init': [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
                                  'prior': None}
 
-_stochastic_ = adjust_stochastic_params(_stochastic_)
+_exreg_stochastic_ = adjust_exreg_stochastic_params(_exreg_stochastic_)
 # calculates covariance matrix from the initial PSD parameter values to be used in log SFR ratios prior
 # psd_params = [0.3, 2.5, 1.0, 0.01, 0.025]
 # sfr_covar = hyperparam_transforms.get_sfr_covar(psd_params, agebins=agebins)
@@ -733,9 +788,115 @@ _stochastic_ = adjust_stochastic_params(_stochastic_)
 # _stochastic_["logsfr_ratios"] = {'N': 7, 'isfree': True, 'init': [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
 #                                  'prior': priors.MultiVariateNormal(mean=[0.]*7, Sigma=sfr_ratio_covar)}
 
-TemplateLibrary["stochastic_sfh"] = (_stochastic_,
+TemplateLibrary["exreg_stochastic_sfh"] = (_exreg_stochastic_,
                                      ("Stochastic SFH which correlates the SFRs between time bins based on model in TFC2020."
-                                      " Requires `HyperSpecModel` as the base model class."))
+                                      " Requires `ExregHyperSpecModel` as the base model class."))
+
+# ---------------------------------
+# --- Arbitrary Stochastic SFH ----
+# ---------------------------------
+# A fixed SFH model which correlates the SFRs between time bins based on some user-specified power spectral density curve for the fluctuations in SFR.
+
+_arbitrary_stochastic_ = TemplateLibrary["ssp"]
+_ = _arbitrary_stochastic_.pop("tage")
+
+_arbitrary_stochastic_["sfh"] = {"N": 1, "isfree": False, "init": 3, "units": "FSPS index"}
+# This is the *total*  mass formed, as a variable
+_arbitrary_stochastic_["logmass"] = {"N": 1, "isfree": True, "init": 10, 'units': 'Msun',
+                           'prior': priors.TopHat(mini=7, maxi=12)}
+# This will be the mass in each bin.  It depends on other free and fixed
+# parameters.  Its length needs to be modified based on the number of bins
+_arbitrary_stochastic_["mass"] = {'N': 8, 'isfree': False, 'init': 1e6, 'units': r'M$_\odot$',
+                        'depends_on': transforms.logsfr_ratios_to_masses}
+
+# This gives the start and stop of each age bin.  It can be adjusted and its
+# length must match the lenth of "mass"
+agebins = [[0.0, 6.0], [6.0, 6.5], [6.5, 7.0], [7.0, 7.5], [7.5, 8.0], [8.0, 8.5], [8.5, 9.0], [9.5, 10.0]]
+_arbitrary_stochastic_["agebins"] = {'N': 8, 'isfree': False, 'init': agebins, 'units': 'log(yr)'}
+
+_arbitrary_stochastic_["logsfr_ratios"] = {'N': 7, 'isfree': True, 'init': [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+                                 'prior': None} # will add in prior in the adjust_arbitrary_stochastic_params
+
+# Sets the PSD parameters & priors
+# sigma_reg: Overall stochasticity coming from gas inflow
+_arbitrary_stochastic_["psd"] = {'name': 'psd', 'N': 1000, 'isfree': False, 'init': np.array([1e-1]*1000),
+                             'prior': None, 'units': 'dex^2 Gyr'}
+
+_arbitrary_stochastic_["psd_times"] = {'name': 'psd_times', 'N': 1000, 'isfree': False, 'init': np.linspace(1e-3,10,1000),
+                             'prior': None, 'units': 'Gyr; evenly spaced!'}
+
+_arbitrary_stochastic_ = adjust_arbitrary_stochastic_params(_arbitrary_stochastic_)
+
+TemplateLibrary["arbitrary_stochastic_sfh"] = (_arbitrary_stochastic_,
+                                     ("Arbitrary stochastic SFH which correlates the SFRs between time bins based on arbitrary PSD."))
+
+# ------------------------------
+# --- Simple Sinusoidal SFH ----
+# ------------------------------
+# A SFH that follows a simple sinusoidal fashion with a power law slope. 
+
+_simple_sinusoidal_ = {}
+
+_simple_sinusoidal_['phi'] = {'N':1, 'isfree':True,'name':'phi', 
+                       'init':0.0, 
+                       'prior':priors.TopHat(mini=0.0,maxi=2.0*np.pi), 'units':'Phase'} 
+# phi/pi is the fraction of the first agebin removed. 
+# If phi > pi, then the sfr is flipped to be "quiescent mode".
+
+_simple_sinusoidal_['alpha'] = {'N':1, 'isfree':False,'name':'alpha', 
+                         'init':-0.1, 
+                         'prior':priors.TopHat(mini=-0.3,maxi=0.0), 'units': 'Power Law Index'}
+
+_simple_sinusoidal_['dt'] = {'N':1, 'isfree':False,'name':'dt', 
+                      'init':40, 
+                      'prior':priors.TopHat(mini=10,maxi=1000), 'units':'Myr'}
+
+_simple_sinusoidal_['sigma'] = {'N':1, 'isfree':False,'name':'sigma', 
+                         'init':0.3, 
+                         'prior':priors.TopHat(mini=0.0,maxi=2.0), 'units':'dex'}
+
+
+_simple_sinusoidal_['SFMS'] = {"N": 1, "isfree": False,'name':'SFMS',  
+                           "init": -8.8, 'units': 'Star forming main sequence sSFR in log10(yr^-1)',
+                           'prior': None}
+
+# --- galaxy parameters --- #
+
+_simple_sinusoidal_['logmass'] = {"N": 1, "isfree": False,
+                           "init": 10, 'units': 'logMsun',
+                           'prior': priors.TopHat(mini=7, maxi=12)}
+
+_simple_sinusoidal_['zred'] = {'N': 1, 'isfree': False,
+                        'init': 0.1,
+                        'prior': priors.Uniform(mini=1e-3, maxi=20.0)}
+
+_simple_sinusoidal_['logzsol'] = {'N': 1, 'isfree': True,
+                           'init': -0.5,
+                           'units': r'$\log (Z/Z_\odot)$',
+                           'prior': priors.Uniform(mini=-1.98, maxi=0.19)}
+
+# --- applying SFH parameters --- #
+
+_simple_sinusoidal_["sfh"] = {"N": 1, "isfree": False,
+                       "init": 3, "units": "FSPS index"}
+
+_simple_sinusoidal_["agebins"] = {'N': None,
+                           'isfree': False,
+                           'init': None,
+                           'units': 'log10(yr)',
+                           'depends_on':transforms.create_agebins_ssSFH
+                           }
+
+_simple_sinusoidal_["mass"] = {'N': None,
+                        'isfree': False,
+                        'init': None,
+                        'units': r'M$_\odot$',
+                        'depends_on':transforms.create_masses_ssSFH}
+
+
+
+TemplateLibrary["simple_sinusoidal_sfh"] = (_simple_sinusoidal_,
+                                     ("Simple sinusoidal SFH model."))
 
 
 # ----------------------------

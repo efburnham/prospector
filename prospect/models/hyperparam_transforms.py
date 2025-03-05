@@ -13,6 +13,8 @@ They can be used as ``"depends_on"`` entries in parameter specifications.
 
 import numpy as np
 from astropy.cosmology import FlatLambdaCDM
+from scipy.interpolate import interp1d
+from scipy.fftpack import fft, ifft, fftfreq
 
 __all__ = ["get_sfr_covar", "sfr_covar_to_sfr_ratio_covar"]
 
@@ -181,3 +183,52 @@ def sfr_covar_to_sfr_ratio_covar(covar_matrix):
         sfr_ratio_covar.append(row)
 
     return np.array(sfr_ratio_covar)
+
+
+class arbitrary_stochastic_sfh():
+    """
+    Similar to the simple_GP_sfh but takes a PSD (that is evenly sampled over time) and a time array to calculate
+    the logsfr ratios prior. This isn't really meant to be *fit* for, just used to model spectra. The 
+    psd should always be held fixed. 
+    """
+
+    def __init__(self,psd=None,psd_times=None):
+        self.psd = psd
+        self.psd_times = psd_times
+        self.covarience_matrix = None
+    
+    
+    def psd_to_covariance(self, time_new):
+        """Computes the covariance matrix for a new time grid given a PSD."""
+    
+        interp_func = interp1d(self.psd_times, self.psd, kind='linear', fill_value="extrapolate")
+        psd_interp = interp_func(time_new)
+    
+        freqs = fftfreq(len(time_new), d=np.mean(np.diff(time_new)))
+        psd_symmetric = np.concatenate((psd_interp, psd_interp[::-1]))
+        cov_func = np.real(ifft(psd_symmetric))[:len(time_new)]
+    
+        time_diff = np.abs(np.subtract.outer(np.arange(len(time_new)), np.arange(len(time_new))))
+        cov_matrix = cov_func[time_diff]
+    
+        return cov_matrix
+
+
+    def get_logsfr_covariance(self, agebins):
+        """Calculates SFR covariance matrix for a given set of PSD parameters and age bins."""
+        bincenters = np.mean(agebins, axis=1)  # More efficient mean calculation
+        bincenters = (10**bincenters) / 1e9
+        self.covariance_matrix = self.psd_to_covariance(bincenters)
+
+
+
+    def get_logsfr_ratios_covariance(self, agebins):
+        """Calculates log SFR ratio covariance matrix from SFR covariance matrix."""
+        self.get_logsfr_covariance(agebins)
+    
+        dim = self.covariance_matrix.shape[0]
+        logsfr_ratios_covar = (self.covariance_matrix[:-1, :-1] - self.covariance_matrix[1:, :-1]
+            - self.covariance_matrix[:-1, 1:] + self.covariance_matrix[1:, 1:]
+        )
+    
+        return logsfr_ratios_covar
