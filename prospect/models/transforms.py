@@ -184,29 +184,49 @@ def dustratio_to_dust1(dust2=0.0, dust_ratio=0.0, **extras):
 # --- Transforms for the continuity non-parametric SFHs used in (Leja et al. 2018) ---
 # --------------------------------------
 
+# def logsfr_ratios_to_masses(logmass=None, logsfr_ratios=None, agebins=None, **extras):
+#     """This converts from an array of log_10(SFR_j / SFR_{j+1}) and a value of
+#     log10(\Sum_i M_i) to values of M_i. j=0 is the most recent bin in lookback
+#     time.
+
+#     This was having some overflow issues when you have tons of SFH bins. This 
+#     version should be more numerically stable. 
+#     """
+#     nbins = agebins.shape[0]
+#     sratios = 10**np.clip(logsfr_ratios, -10, 10)  # Prevent numerical issues
+
+#     dt = (10**agebins[:, 1] - 10**agebins[:, 0])
+
+#     coeffs = np.array([
+#         (1. / np.prod(sratios[:i])) * (np.prod(dt[1:i+1]) / np.prod(dt[:i]))
+#         for i in range(nbins)
+#     ])
+
+#     m1 = (10**logmass) / coeffs.sum()
+
+#     return m1 * coeffs 
+
+
 def logsfr_ratios_to_masses(logmass=None, logsfr_ratios=None, agebins=None, **extras):
-    """This converts from an array of log_10(SFR_j / SFR_{j+1}) and a value of
-    log10(\Sum_i M_i) to values of M_i. j=0 is the most recent bin in lookback
-    time.
-
-    This was having some overflow issues when you have tons of SFH bins. This 
-    version should be more numerically stable. 
-    """
+    """Convert log SFR ratios and total mass to individual mass bins in a numerically stable way."""
     nbins = agebins.shape[0]
-    sratios = 10**np.clip(logsfr_ratios, -10, 10)  # Prevent numerical issues
+    sratios = 10**np.clip(logsfr_ratios, -10, 10)  # Prevent extreme exponentiation
 
-    dt = (10**agebins[:, 1] - 10**agebins[:, 0])
-    dt_max = dt.max()
-    dt /= dt_max  # Normalize by the largest dt to improve numerical stability
+    log_dt = np.log10(10**agebins[:, 1] - 10**agebins[:, 0])  # Work in log-space
 
-    coeffs = np.array([
-        (1. / np.prod(sratios[:i])) * (np.prod(dt[1:i+1]) / np.prod(dt[:i]))
+    log_sratios_cumsum = np.cumsum(np.log10(sratios))  # Cumulative sum of log SFR ratios
+
+    # Compute coefficients in log-space
+    log_coeffs = np.array([
+        -log_sratios_cumsum[i-1] + np.sum(log_dt[1:i+1]) - np.sum(log_dt[:i]) if i > 0 else 0
         for i in range(nbins)
     ])
 
-    m1 = (10**logmass) / coeffs.sum()
+    coeffs = 10**log_coeffs  # Convert back to linear space
+    m1 = (10**logmass) / coeffs.sum()  # Compute normalization
 
-    return m1 * coeffs * dt_max  # Denormalize to ensure mass conservation
+    return m1 * coeffs
+
 
 
 
