@@ -14,7 +14,9 @@ They can be used as ``"depends_on"`` entries in parameter specifications.
 import numpy as np
 from astropy.cosmology import FlatLambdaCDM
 from scipy.interpolate import interp1d
-from scipy.fftpack import fft, ifft, fftfreq
+from scipy.interpolate import CubicSpline
+import matplotlib.pyplot as plt
+
 
 __all__ = ["get_sfr_covar", "sfr_covar_to_sfr_ratio_covar"]
 
@@ -184,51 +186,53 @@ def sfr_covar_to_sfr_ratio_covar(covar_matrix):
 
     return np.array(sfr_ratio_covar)
 
-
 class arbitrary_stochastic_sfh():
     """
-    Similar to the simple_GP_sfh but takes a PSD (that is evenly sampled over time) and a time array to calculate
-    the logsfr ratios prior. This isn't really meant to be *fit* for, just used to model spectra. The 
-    psd should always be held fixed. 
+    Similar to the simple_GP_sfh but takes a functional ACF (in units of dex2) and takes timescales in Gyr to
+    calculate the logsfr ratios prior. This isn't really meant to be *fit* for, just used to model spectra. 
+    The acf function should always be held fixed for a given population. 
     """
 
-    def __init__(self,psd=None,psd_times=None):
-        self.psd = psd
-        self.psd_times = psd_times
-        self.covarience_matrix = None
-    
-    
-    def psd_to_covariance(self, time_new):
+    def __init__(self,acf=None):        
+        self.acf = acf
+        self.covariance_matrix = None
+
+    def acf_to_covariance(self,times):
         """Computes the covariance matrix for a new time grid given a PSD."""
-    
-        interp_func = interp1d(self.psd_times, self.psd, kind='linear', fill_value="extrapolate")
-        psd_interp = interp_func(time_new)
-    
-        freqs = fftfreq(len(time_new), d=np.mean(np.diff(time_new)))
-        psd_symmetric = np.concatenate((psd_interp, psd_interp[::-1]))
-        cov_func = np.real(ifft(psd_symmetric))[:len(time_new)]
-    
-        time_diff = np.abs(np.subtract.outer(np.arange(len(time_new)), np.arange(len(time_new))))
-        cov_matrix = cov_func[time_diff]
+
+        num_times = len(times)
+        cov_matrix = np.zeros((num_times,num_times))
+
+        for i in range(num_times):
+            for j in range(num_times):
+                tau = times[i] - times[j]
+                cov_matrix[i,j] = self.acf(abs(tau))
     
         return cov_matrix
 
 
     def get_logsfr_covariance(self, agebins):
         """Calculates SFR covariance matrix for a given set of PSD parameters and age bins."""
-        bincenters = np.mean(agebins, axis=1)  # More efficient mean calculation
-        bincenters = (10**bincenters) / 1e9
-        self.covariance_matrix = self.psd_to_covariance(bincenters)
-
-
+        bincenters = np.array([np.mean(agebins[i]) for i in range(len(agebins))])
+        bincenters = (10**bincenters) * 1e-9 # moving to Gyr
+        cov_matrix = self.acf_to_covariance(bincenters)
+        return cov_matrix
 
     def get_logsfr_ratios_covariance(self, agebins):
         """Calculates log SFR ratio covariance matrix from SFR covariance matrix."""
-        self.get_logsfr_covariance(agebins)
-    
+        self.covariance_matrix = self.get_logsfr_covariance(agebins)
+
+        logsfr_ratios_covar = []
         dim = self.covariance_matrix.shape[0]
-        logsfr_ratios_covar = (self.covariance_matrix[:-1, :-1] - self.covariance_matrix[1:, :-1]
-            - self.covariance_matrix[:-1, 1:] + self.covariance_matrix[1:, 1:]
-        )
-    
+
+        for i in range(dim-1):
+            row = []
+            for j in range(dim-1):
+                cov = self.covariance_matrix[i][j] - self.covariance_matrix[i+1][j] - self.covariance_matrix[i][j+1] + self.covariance_matrix[i+1][j+1]
+                row.append(cov)
+            logsfr_ratios_covar.append(row)
+
+        logsfr_ratios_covar = np.array(logsfr_ratios_covar)
+
         return logsfr_ratios_covar
+

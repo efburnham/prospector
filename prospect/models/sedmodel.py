@@ -212,7 +212,7 @@ class SpecModel(ProspectorParams):
 
         # --- add (previously) fitted lines if necessary ---
         emask = self._fit_eline_pixelmask
-        if emask.any() (~continuum_only):
+        if emask.any() & (~continuum_only):
             inst_spec[emask] += self._fit_eline_spec.sum(axis=1)
 
         return inst_spec

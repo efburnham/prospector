@@ -162,14 +162,11 @@ def adjust_arbitrary_stochastic_params(parset, tuniv=13.7):
     """
     
     agebins = parset['agebins']['init']
-    psd = parset['psd']['init']
-    psd_times = parset['psd_times']['init']
+    acf = parset['acf']['init']
 
     ncomp = len(parset['agebins']['init'])
-    mean = np.zeros(ncomp - 1)
-    ncomp_psd = len(psd)
-    
-    arbitrary_stochasatic_basis = hyperparam_transforms.arbitrary_stochastic_sfh(psd=psd,psd_times=psd_times)
+    mean = np.zeros(ncomp - 1)    
+    arbitrary_stochasatic_basis = hyperparam_transforms.arbitrary_stochastic_sfh(acf=acf)
     logsfr_ratios_covar = arbitrary_stochasatic_basis.get_logsfr_ratios_covariance(agebins=agebins)
     rprior = priors.MultiVariateNormal(mean=mean, Sigma=logsfr_ratios_covar)
     
@@ -178,8 +175,6 @@ def adjust_arbitrary_stochastic_params(parset, tuniv=13.7):
     parset["logsfr_ratios"]["N"] = ncomp - 1
     parset["logsfr_ratios"]["init"] = mean
     parset["logsfr_ratios"]["prior"] = rprior
-    parset['psd']['N'] = ncomp_psd
-    parset['psd_times']['N'] = ncomp_psd
 
     return parset
 
@@ -819,11 +814,12 @@ _arbitrary_stochastic_["logsfr_ratios"] = {'N': 7, 'isfree': True, 'init': [0.0,
 
 # Sets the PSD parameters & priors
 # sigma_reg: Overall stochasticity coming from gas inflow
-_arbitrary_stochastic_["psd"] = {'name': 'psd', 'N': 1000, 'isfree': False, 'init': np.array([1e-1]*1000),
-                             'prior': None, 'units': 'dex^2 Gyr'}
 
-_arbitrary_stochastic_["psd_times"] = {'name': 'psd_times', 'N': 1000, 'isfree': False, 'init': np.linspace(1e-3,10,1000),
-                             'prior': None, 'units': 'Gyr; evenly spaced!'}
+def temp_acf(tau):
+    return np.sqrt(tau)
+    
+_arbitrary_stochastic_["acf"] = {'name': 'acf function', 'N': 1, 'isfree': False, 'init': temp_acf,
+                             'prior': None, 'units': 'dex^2'}
 
 _arbitrary_stochastic_ = adjust_arbitrary_stochastic_params(_arbitrary_stochastic_)
 
