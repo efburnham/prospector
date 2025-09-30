@@ -11,6 +11,8 @@ They can be used as ``"depends_on"`` entries in parameter specifications.
 import numpy as np
 from ..sources.constants import cosmo
 import warnings
+from scipy.fft import ifft, fftshift, ifftshift, fftfreq
+
 #from gp_sfh import *
 #import gp_sfh_kernels
 
@@ -745,3 +747,204 @@ def create_masses_ssSFH(dt=40, sigma=0.3, alpha=0.0, phi=0.0, logmass=10, zred=0
     masses = np.clip(masses, a_min=0, a_max=None)
     
     return masses
+
+# ---------------------------------------------------------
+# --- Transforms for nonparametric model with a slope  ---
+# ---------------------------------------------------------
+    
+
+def logsfr_ratios_to_masses_sloped(logmass=None, logsfr_ratios=None, agebins=None, alpha=0.0, t_crit=500, **extras):
+
+    sfr = logsfr_ratios_to_sfrs(logmass=logmass, logsfr_ratios=logsfr_ratios, agebins=agebins, **extras)
+
+    times = 1e-6*(10**agebins[:,0] + 10**agebins[:,1])/2 # times in Myrs
+    dt = 10**agebins[:, 1] - 10**agebins[:, 0]
+    t_fine = np.logspace(np.log10(np.min(times*1e6)),np.log10(np.max(times*1e6)),int(1e3))
+    dt_fine = np.diff(t_fine)
+    sfr_fine = np.interp(t_fine,times*1e6,sfr)
+    t_mask = np.where(t_fine<=t_crit*1e6) 
+    t_mask_opp = np.where(t_fine>t_crit*1e6) 
+    
+    sfr_norm = np.mean(sfr_fine[t_mask])
+    x = np.log10(t_fine*1e-6)
+
+    slope = x*alpha
+    flat = slope[t_mask][-1]
+    logsfr_norm = np.log10(sfr_fine) - np.log10(sfr_norm)
+    logsfr_norm_slope = logsfr_norm.copy()
+    logsfr_norm_slope[t_mask] = logsfr_norm_slope[t_mask] + slope[t_mask]
+    logsfr_norm_slope[t_mask_opp] = logsfr_norm_slope[t_mask_opp] + flat
+
+    sfr_new = 10**(logsfr_norm_slope + np.log10(sfr_norm))
+    sfr_new = np.interp(times*1e6,t_fine,sfr_new)
+    
+    sfr_new_massnorm = sfr_new/np.trapz(sfr_new,x=times*1e6)
+    sfr_new = sfr_new_massnorm * 10**logmass
+    mass_new = sfr_new * dt
+    return mass_new
+
+def slope_scatter_to_slope(mu_alpha=None,sigma_alpha=None,**extras):
+    return np.random.normal(mu_alpha,sigma_alpha)
+
+
+def logpsd_ratios_to_psd(total_power=1.0, logpsd_ratios=[0., 0., 0], log_time_bins=[[-3.,-2.],[-2.,-1.],[-1.,0.],[0.,1.]], ntime=1000):
+    """
+    logpsd_ratios length = N_bins - 1, giving dex differences between bin i and i+1:
+      logpsd_vals[i] - logpsd_vals[i+1] = logpsd_ratios[i]
+    We reconstruct absolute log PSD values up to a constant offset by fixing last bin to 0 dex.
+    """
+    logpsd_ratios = np.array(logpsd_ratios)
+    log_time_bins = np.array(log_time_bins)
+    N = len(log_time_bins)
+    assert len(logpsd_ratios) == N - 1
+
+    # Reconstruct absolute log PSD values by iterating from last bin = 0 dex upward:
+    logpsd_vals = np.zeros(N)
+    for i in range(N-2, -1, -1):
+        logpsd_vals[i] = logpsd_vals[i+1] + logpsd_ratios[i]
+
+    # Now logpsd_vals is absolute PSD in dex, last bin fixed at 0 dex.
+
+    t = np.logspace(np.min(log_time_bins), np.max(log_time_bins), ntime)
+    dt = 10**log_time_bins[:,1] - 10**log_time_bins[:,0]
+    df = 1.0 / dt
+
+    psd_vals = 10**logpsd_vals  # linear scale
+
+    # Normalize total power
+    power_total_unscaled = np.sum(psd_vals * df)
+    scale = total_power / power_total_unscaled
+    psd_vals *= scale
+
+    psd = np.zeros_like(t)
+    for i, (log_t0, log_t1) in enumerate(log_time_bins):
+        t0, t1 = 10**log_t0, 10**log_t1
+        mask = (t >= t0) & (t < t1)
+        psd[mask] = psd_vals[i]
+
+    return psd, t #, logpsd_vals
+
+
+def logpsd_ratios_to_acf(logpsd_ratios, total_power=1.0, log_time_bins=[[-3.,-2.],[-2.,-1.],[-1.,0.],[0.,1.]], taus=None):
+    logpsd_ratios = np.array(logpsd_ratios)
+    log_time_bins = np.array(log_time_bins)
+    assert len(logpsd_ratios) == len(log_time_bins)-1
+
+    # Build frequency bin edges from log_time_bins
+    time_edges = 10 ** log_time_bins  # shape (N_bins, 2)
+    freq_lo = 1 / time_edges[:, 1]  # lower frequency = 1 / t_high
+    freq_hi = 1 / time_edges[:, 0]  # upper frequency = 1 / t_low
+
+    # Combine into full frequency edges
+    freq_edges = np.concatenate([freq_lo, [freq_hi[-1]]])
+    freq_edges.sort()  # ensure increasing
+
+    # Reconstruct log PSD values assuming logpsd_ratios[i] = log10(PSD[i]) - log10(PSD[i+1])
+    log_psd_vals = [0]
+    for r in logpsd_ratios:
+        log_psd_vals.append(log_psd_vals[-1] + r)  # correctly accumulate in increasing freq order
+
+    log_psd_vals = np.array(log_psd_vals)
+    psd_vals = 10 ** (log_psd_vals - np.min(log_psd_vals))  # shift so all values are positive and relative
+
+    # Frequency bin widths
+    df = freq_edges[1:] - freq_edges[:-1]
+    if len(df) != len(psd_vals):
+        raise ValueError(f"Mismatch: {len(df)} bins vs {len(psd_vals)} PSD values.")
+
+    # Normalize to total power
+    power_per_bin = psd_vals * df
+    scale = total_power / np.sum(power_per_bin)
+    psd_vals *= scale
+
+    # Tau grid
+    if taus is None:
+        taus = np.logspace(0, 6, 500)
+    taus = np.atleast_1d(taus)
+    acf = np.zeros_like(taus, dtype=np.float64)
+
+    # Integrate each PSD bin into ACF
+    for i in range(len(psd_vals)):
+        f_lo, f_hi = freq_edges[i], freq_edges[i + 1]
+        tau = taus
+        delta = (np.sin(2 * np.pi * f_hi * tau) - np.sin(2 * np.pi * f_lo * tau)) / (2 * np.pi * tau)
+        delta = np.where(tau == 0, f_hi - f_lo, delta)  # handle tau=0 safely
+        acf += psd_vals[i] * delta
+
+    return taus, acf
+
+
+
+
+def acf_at_tau(tau, logpsd_ratios=[0.,0.,0.], total_power=1.0, log_time_bins=[[-3.,-2.],[-2.,-1.],[-1.,0.],[0.,1.]]):
+    """
+    Evaluate the ACF at a specific time lag (or array of lags) tau. Tau in Gyrs.
+    """
+    tau = np.atleast_1d(tau)
+    taus, acf_vals = logpsd_ratios_to_acf(logpsd_ratios, total_power, log_time_bins, taus=tau)
+    return acf_vals 
+
+def logpsd_norms_to_psd(t,logpsd_mus=[-3,-2,-1,0,1],logpsd_sigmas=[0.5]*5,logpsd_norms=[0]*5,return_comps=False):
+    """
+    Build PSD as sum of Gaussian components defined in x = log10(t).
+    
+    - mus: time centers in dex (log10 Gyr)
+    - sigmas: std dev in dex (log10 Gyr)
+    - norms: desired area of each component in log-space (i.e. integral over x)
+             -> integral over linear t of each component will equal this norm
+    - ntimes: number of sample points in t (linear grid via x linspace)
+    - pad_dex: how many dex to pad around min/max mus for the x grid
+    Returns: psd (power per unit t), t (linear)
+    """
+    mus = np.asarray(logpsd_mus, dtype=float)
+    sigmas = np.asarray(logpsd_sigmas, dtype=float)
+    norms = 10**np.asarray(logpsd_norms, dtype=float)
+    assert mus.shape == sigmas.shape == norms.shape
+    ncomps = mus.shape[0]
+
+    x = np.log10(t)
+
+    psd = np.zeros_like(t)
+    psd_comps = np.zeros((ncomps,len(t)))
+
+    for i,(mu, sigma, norm) in enumerate(zip(mus, sigmas, norms)):
+        # gaussian in x (unnormalized)
+        gx = np.exp(-0.5 * ((x - mu) / sigma) ** 2)
+
+        # normalize in x so integral gx dx = 1
+        gx /= (sigma * np.sqrt(2 * np.pi))
+        gx *= norm
+        psd_comps[i] = gx
+
+    psd = np.sum(psd_comps,axis=0)
+
+    if return_comps:
+        return psd, psd_comps
+    else:
+        return psd
+
+def logpsd_norms_to_acf(logpsd_mus=[-3,-2,-1,0,1],logpsd_sigmas=[0.5]*5,logpsd_norms=[0]*5,ntimes=2**20,t_min=1e-4,even=True):
+    f_max = 1/t_min            # max frequency (Gyr^-1)
+    df = 2 * f_max / ntimes
+    f = np.linspace(-f_max, f_max - df, ntimes)
+    mask = f > 0
+    t_pos = 1/f[mask]
+    psd_pos = logpsd_norms_to_psd(t_pos,logpsd_mus=logpsd_mus,logpsd_sigmas=logpsd_sigmas,logpsd_norms=logpsd_norms)
+
+    # reflecting to negative frequencies
+    if even:
+        psd = np.concatenate([psd_pos[::-1],np.zeros(len(f)-len(psd_pos)*2),psd_pos])
+    else:
+        psd[mask] = psd_pos
+        
+    acf_vals = fftshift(ifft(ifftshift(psd))) * ntimes * df  
+    t = fftshift(fftfreq(ntimes, d=df))
+
+    def acf(tau):
+        tau = np.atleast_1d(tau)
+        vals = np.interp(tau, t, acf_vals.real)  # keep real part
+        if vals.size == 1:
+            return vals.item()   # return scalar
+        return vals
+
+    return acf

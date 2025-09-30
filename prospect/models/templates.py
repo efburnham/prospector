@@ -50,6 +50,24 @@ class Directory(object):
         for k, v in list(self._descriptions.items()):
             print("'{}':\n  {}".format(k, v))
 
+    def update(self, other):
+        """Add or update entries from another Directory or dict-like object.
+
+        Parameters:
+        - other: Directory or dict-like object where values are (entry, description) tuples
+        """
+        if isinstance(other, Directory):
+            for k in other._entries:
+                self._entries[k] = deepcopy(other._entries[k])
+                self._descriptions[k] = deepcopy(other._descriptions[k])
+        elif isinstance(other, dict):
+            for k, v in other.items():
+                entry, description = v
+                self._entries[k] = deepcopy(entry)
+                self._descriptions[k] = deepcopy(description)
+        else:
+            raise TypeError("Can only update from another Directory or dict-like with (entry, description) values")
+
 
 def describe(parset, current_params={}):
     ttext = "Free Parameters: (name: prior) \n-----------\n"
@@ -156,10 +174,30 @@ def adjust_exreg_stochastic_params(parset, tuniv=13.7):
 
     return parset
 
+def enforce_min_eigenvalue(cov, min_eigenval=1e-10):
+    """
+    Modify `cov` so that all its eigenvalues are >= min_eigval.
+    
+    Parameters:
+        cov (np.ndarray): Original symmetric covariance matrix.
+        min_eigval (float): Minimum allowed eigenvalue.
+    
+    Returns:
+        np.ndarray: Modified covariance matrix with safe eigenvalues.
+    """
+
+    eigenvals = np.linalg.eigvalsh(cov)
+
+    if np.min(eigenvals) < min_eigenval:
+        cov = 0.5 * (cov + cov.T)
+        eigenvals, eigenvecs = np.linalg.eigh(cov)
+        eigenvals_clipped = np.clip(eigenvals, a_min=min_eigenval, a_max=None)
+        cov_fixed = eigenvecs @ np.diag(eigenvals_clipped) @ eigenvecs.T
+        return 0.5 * (cov_fixed + cov_fixed.T)
+    else:
+        return cov
+
 def adjust_arbitrary_stochastic_params(parset, tuniv=13.7):
-    """
-    assumes some parameter "psd" and "psd_times" has been defined by the user in the model parameters.
-    """
     
     agebins = parset['agebins']['init']
     acf = parset['acf']['init']
@@ -168,13 +206,61 @@ def adjust_arbitrary_stochastic_params(parset, tuniv=13.7):
     mean = np.zeros(ncomp - 1)    
     arbitrary_stochasatic_basis = hyperparam_transforms.arbitrary_stochastic_sfh(acf=acf)
     logsfr_ratios_covar = arbitrary_stochasatic_basis.get_logsfr_ratios_covariance(agebins=agebins)
-    rprior = priors.MultiVariateNormal(mean=mean, Sigma=logsfr_ratios_covar)
+    cov = enforce_min_eigenvalue(logsfr_ratios_covar)
+
+
+    # print('% difference in cov:',(cov-logsfr_ratios_covar)/logsfr_ratios_covar)
+    # print('cov',cov)
+    # print('is symmetric',np.allclose(cov, cov.T, atol=1e-8))
+    # print('eigan values', np.linalg.eigvalsh(cov))
+    # print('semi definite', np.all(np.linalg.eigvalsh(cov) >= 1e-8))
+    rprior = priors.MultiVariateNormal(mean=mean, Sigma=cov)
     
     parset['mass']['N'] = ncomp
     parset['agebins']['N'] = ncomp
     parset["logsfr_ratios"]["N"] = ncomp - 1
     parset["logsfr_ratios"]["init"] = mean
     parset["logsfr_ratios"]["prior"] = rprior
+
+    return parset
+
+def adjust_flex_stochastic_params(parset, tuniv=13.7):
+
+    log_time_bins = parset['log_time_bins']['init']
+    logpsd_ratios = parset['logpsd_ratios']['init']
+    total_power = parset['total_power']['init']
+
+    assert len(logpsd_ratios) == len(log_time_bins)-1
+
+    acf = lambda tau: transforms.acf_at_tau(tau,
+                                            logpsd_ratios=logpsd_ratios,
+                                            log_time_bins=log_time_bins,
+                                            total_power=total_power)
+
+    parset['acf']['init'] = acf
+
+    parset = adjust_arbitrary_stochastic_params(parset,tuniv=tuniv)
+
+    return parset
+
+def adjust_gmm_stochastic_params(parset, tuniv=13.7):
+
+    logpsd_mus = parset['logpsd_mus']['init']
+    logpsd_sigmas = parset['logpsd_sigmas']['init']
+    logpsd_norms = parset['logpsd_norms']['init']
+
+    assert len(logpsd_mus) == len(logpsd_sigmas) == len(logpsd_norms)
+    N = len(logpsd_mus)
+
+    parset['logpsd_mus']['N']=N
+    parset['logpsd_sigmas']['N']=N
+    parset['logpsd_norms']['N']=N
+
+    acf = transforms.logpsd_norms_to_acf(logpsd_mus=logpsd_mus,logpsd_sigmas=logpsd_sigmas,logpsd_norms=logpsd_norms)
+
+    parset['acf']['init'] = acf
+
+    parset = adjust_arbitrary_stochastic_params(parset,tuniv=tuniv)
 
     return parset
 
@@ -825,6 +911,107 @@ _arbitrary_stochastic_ = adjust_arbitrary_stochastic_params(_arbitrary_stochasti
 
 TemplateLibrary["arbitrary_stochastic_sfh"] = (_arbitrary_stochastic_,
                                      ("Arbitrary stochastic SFH which correlates the SFRs between time bins based on arbitrary PSD."))
+
+# --------------------------------------
+# --- Flexible Stochastic SFH ----
+# --------------------------------------
+# A fixed SFH model which correlates the SFRs between time bins based on a flexible PSD defined by logpsd_ratios.
+
+_flex_stochastic_sfh_ = TemplateLibrary["arbitrary_stochastic_sfh"]
+
+_flex_stochastic_sfh_["logpsd_ratios"] = {'name': 'log PSD ratios', 'N': 3, 'isfree': False, 'init': [0.,0.,0.],
+                             'prior': None, 'units': 'log10(dex^2 Gyr)'}
+
+_flex_stochastic_sfh_["log_time_bins"] = {'name': 'log PSD ratios', 'N': 4, 'isfree': False, 'init': [[-3.,-2.],[-2.,-1.],[-1.,0.],[0.,1.]],
+                             'prior': None, 'units': 'log10(Gyr)'}
+
+_flex_stochastic_sfh_["total_power"] = {'name': 'total PSD power', 'N': 1, 'isfree': False, 'init': 1.0,
+                             'prior': None, 'units': 'dex^2'}
+
+_flex_stochastic_sfh_ = adjust_flex_stochastic_params(_flex_stochastic_sfh_)
+
+TemplateLibrary["flex_stochastic_sfh"] = (_flex_stochastic_sfh_,
+                                     ("Non-parametric stochastic SFH which correlates the SFRs between time bins based on arbitrary peice-wise PSD."))
+
+# --------------------------------------
+# --- GMM Stochastic SFH ----
+# --------------------------------------
+# A fixed SFH model which correlates the SFRs to a Log10 Guassian-Mixture Model PSD. 
+
+_gmm_stochastic_sfh_ = TemplateLibrary["arbitrary_stochastic_sfh"]
+
+_gmm_stochastic_sfh_['logpsd_norms'] = {'name': 'log PSD normalizations', 'N': 5, 'isfree': False, 'init': [0.,0.,0.,0.,0.],
+                             'prior': None, 'units': 'log10(dex^2 Gyr)'}
+
+_gmm_stochastic_sfh_['logpsd_mus'] = {'name': 'log PSD means', 'N': 5, 'isfree': False, 'init': [-3,-2,-1,0,1],
+                             'prior': None, 'units': 'log10(Gyr)'}
+
+_gmm_stochastic_sfh_['logpsd_sigmas'] = {'name': 'log PSD sigmas', 'N': 5, 'isfree': False, 'init': [0.5,0.5,0.5,0.5,0.5],
+                             'prior': None, 'units': 'log10(Gyr)'}
+
+
+_gmm_stochastic_sfh_ = adjust_gmm_stochastic_params(_gmm_stochastic_sfh_)
+
+TemplateLibrary["gmm_stochastic_sfh"] = (_gmm_stochastic_sfh_,
+                                     ("Gaussian mixture model PSD that models stochastic SFHs."))
+
+
+
+# ------------------------------
+# --- Sloped SFH ----
+# ------------------------------
+
+_sloped_ = TemplateLibrary["ssp"]
+_ = _sloped_.pop("tage")
+
+_sloped_["sfh"] = {"N": 1, "isfree": False, "init": 3, "units": "FSPS index"}
+
+_sloped_["mass"] = {'N': 8, 'isfree': False, 'init': 1e6, 'units': r'M$_\odot$',
+                        'depends_on': transforms.logsfr_ratios_to_masses_sloped}
+
+_sloped_["logmass"] = {"N": 1, "isfree": True, "init": 10, 'units': 'Msun',
+                           'prior': priors.TopHat(mini=7, maxi=12)}
+
+# This gives the start and stop of each age bin.  It can be adjusted and its
+# length must match the lenth of "mass"
+agebins = [[0.0, 6.0], [6.0, 6.5], [6.5, 7.0], [7.0, 7.5], [7.5, 8.0], [8.0, 8.5], [8.5, 9.0], [9.5, 10.0]]
+_sloped_["agebins"] = {'N': 8, 'isfree': False, 'init': agebins, 'units': 'log(yr)'}
+
+_sloped_["logsfr_ratios"] = {'N': 7, 'isfree': True, 'init': [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+                                 'prior': priors.StudentT(mean=[0.0]*7, scale=[0.3]*7, df=[2]*7)} 
+
+_sloped_["alpha"] = {'N':1, 'isfree':True,'name':'alpha', 
+                     'init':-0.1, 
+                     'prior':priors.TopHat(mini=-1,maxi=1), 'units': 'Power Law Index'}
+
+_sloped_["t_crit"] = {'N':1, 'isfree':False,'name':'t_crit', 
+                     'init':500, 'units': 'Critical time in Myrs for slope'}
+
+TemplateLibrary["sloped_sfh"] = (_sloped_,
+                                     ("Sloped non-parametric SFH."))
+
+# -----------------------------
+# --- Scattered Sloped SFH ----
+# -----------------------------
+
+_scattered_sloped_ = TemplateLibrary["sloped_sfh"]
+
+_scattered_sloped_["alpha"] = {'N':1, 'isfree':False,'name':'alpha', 
+                     'init':-0.1,  'units': 'Power Law Index',
+                     'depends_on': transforms.slope_scatter_to_slope,
+                    }
+
+_scattered_sloped_["mu_alpha"] = {'N':1, 'isfree':True,'name':'mu_alpha', 
+                     'init':0.0, 
+                     'prior':priors.TopHat(mini=-1,maxi=1), 'units': 'Mean Power Law Index'}
+
+_scattered_sloped_["sigma_alpha"] = {'N':1, 'isfree':True,'name':'sigma_alpha', 
+                     'init':0.1, 
+                     'prior':priors.TopHat(mini=0.01,maxi=3), 'units': 'Scatter in Power Law Index'}
+
+TemplateLibrary["scattered_sloped_sfh"] = (_scattered_sloped_,
+                                     ("Sloped non-parametric SFHs with some mean slope and scatter of said slope."))
+
 
 # ------------------------------
 # --- Simple Sinusoidal SFH ----

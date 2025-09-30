@@ -193,6 +193,19 @@ class Prior(object):
         raise(NotImplementedError)
 
 
+class DummyPrior():
+    """ A prior used purely from sampling from arbitrary PDF given some data set."""
+    def __init__(self,data,parnames=[], name='', **kwargs):
+        from scipy.stats import gaussian_kde
+        self.kde = gaussian_kde(data)
+
+    def __len__(self):
+        return 1
+
+    def sample(self,nsample=1,**kwargs):
+        return self.kde.resample(size=nsample)
+
+
 class Uniform(Prior):
     """A simple uniform prior, described by two parameters
 
