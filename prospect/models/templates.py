@@ -288,6 +288,27 @@ def adjust_simple_sinusoidal_params(parset, tuniv=13.7):
 
     return parset
 
+def adjust_realistic_psd_params(parset, tuniv=13.7):
+
+    logpsd_mus = parset['logpsd_mus']['init']
+    logpsd_norm1 = parset['logpsd_norm1']['init']
+    logpsd_taus = parset['logpsd_taus']['init']
+    logpsd_betas = parset['logpsd_betas']['init']
+    parset['logpsd_betas']['N']=len(logpsd_betas)
+    parset['logpsd_taus']['N']=len(logpsd_taus)
+
+    logpsd_norms = transforms.tau_beta_to_psd_norms(logpsd_norm1=logpsd_norm1,
+                                                    logpsd_mus=logpsd_mus,
+                                                    logpsd_taus=logpsd_taus,
+                                                    logpsd_betas=logpsd_betas,
+                                                   )
+
+    parset['logpsd_norms'] = logpsd_norms
+    
+    parset = adjust_gmm_stochastic_params(parset,tuniv=tuniv)
+
+    return parset
+
 
 TemplateLibrary = Directory()
 
@@ -934,9 +955,9 @@ TemplateLibrary["flex_stochastic_sfh"] = (_flex_stochastic_sfh_,
                                      ("Non-parametric stochastic SFH which correlates the SFRs between time bins based on arbitrary peice-wise PSD."))
 
 # --------------------------------------
-# --- GMM Stochastic SFH ----
-# --------------------------------------
-# A fixed SFH model which correlates the SFRs to a Log10 Guassian-Mixture Model PSD. 
+# --- flex-PSD SFH ----
+# -------------------------------------- 
+# A fixed SFH model which correlates the SFRs to a Log10 Guassian-Mixture Model PSD (flex-PSD model from Burnham et al. (2026). 
 
 _gmm_stochastic_sfh_ = TemplateLibrary["arbitrary_stochastic_sfh"]
 
@@ -954,6 +975,29 @@ _gmm_stochastic_sfh_ = adjust_gmm_stochastic_params(_gmm_stochastic_sfh_)
 
 TemplateLibrary["gmm_stochastic_sfh"] = (_gmm_stochastic_sfh_,
                                      ("Gaussian mixture model PSD that models stochastic SFHs."))
+
+# --------------------------------------
+# --- Realistic flex-PSD SFH ----
+# -------------------------------------- 
+# A fixed SFH model which correlates the SFRs to a Log10 Guassian-Mixture Model PSD (flex-PSD model from Burnham et al. (2026). 
+
+_realistic_flexpsd_sfh_ = TemplateLibrary["gmm_stochastic_sfh"]
+
+_realistic_flexpsd_sfh_['logpsd_taus'] = {'name': 'log PSD power-law breaks', 'N': 2, 'isfree': False, 'init': [-2,0],
+                             'prior': None, 'units': 'log10(Gyr)'}
+
+_realistic_flexpsd_sfh_['logpsd_betas'] = {'name': 'log PSD broken power-law slopes', 'N': 3, 'isfree': False, 'init': [0,2,0],
+                             'prior': None, 'units': 'log10(Gyr)'}
+
+_realistic_flexpsd_sfh_['logpsd_norm1'] = {'name': 'log PSD first component normalization', 'N': 1, 'isfree': False, 'init': -8,
+                             'prior': None, 'units': 'log10(dex^2 Gyr)'}
+
+_realistic_flexpsd_sfh_['logpsd_norms']['depends_on'] = transforms.tau_beta_to_psd_norms
+
+_realistic_flexpsd_sfh_ = adjust_realistic_psd_params(_realistic_flexpsd_sfh_)
+
+TemplateLibrary["realistic_flexpsd_sfh"] = (_realistic_flexpsd_sfh_,
+                                     ("A realistic flex-PSD SFH parametrization in the form of a broken power-law."))
 
 
 

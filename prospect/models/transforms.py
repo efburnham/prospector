@@ -948,3 +948,21 @@ def logpsd_norms_to_acf(logpsd_mus=[-3,-2,-1,0,1],logpsd_sigmas=[0.5]*5,logpsd_n
         return vals
 
     return acf
+
+def tau_beta_to_psd_norms(logpsd_taus=[-2, 0], logpsd_betas=[0, 2, 1], logpsd_norm1=-8, logpsd_mus=[-3, -2, -1, 0, 1],**extras):
+    taus = np.asarray(taus, dtype=float)
+    betas = np.asarray(betas, dtype=float)
+    mus = np.asarray(logpsd_mus, dtype=float)
+    
+    assert len(betas) == len(taus) + 1
+    
+    norms = np.full_like(mus, logpsd_norm1) # start with a flat psd
+    
+    if betas[0] != 0:
+        norms += betas[0] * (mus - mus[0])
+    
+    for i, tau in enumerate(taus):
+        slope_change = betas[i+1] - betas[i]
+        norms += slope_change * np.maximum(0, mus - tau)
+        
+    return norms
