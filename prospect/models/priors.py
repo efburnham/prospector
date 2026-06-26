@@ -9,6 +9,8 @@ construct prior transforms (for nested sampling) and can be sampled from.
 import numpy as np
 import scipy.stats
 from scipy.special import erf, erfinv
+from scipy.interpolate import interp1d
+from scipy.integrate import cumulative_trapezoid, trapezoid
 
 
 __all__ = ["Prior", "Uniform", "TopHat", "Normal", "MultiVariateNormal", "ClippedNormal",
@@ -850,3 +852,223 @@ class FastTruncatedEvenStudentTFreeDeg2Scalar(Prior):
 
     def sample(self):
         return self.unit_transform(np.random.rand())
+
+
+# class SMFz8:
+#     """
+#     z~8 Stellar Mass Function sampler.
+
+#     Parameters
+#     ----------
+#     marginalize : bool
+#         If True, draw a new stochastic realization of the SMF
+#         each time the PDF is rebuilt using the reported
+#         uncertainties.
+
+#         If False, use the central SMF values directly.
+
+#     random_state : int or None
+#         Random seed for reproducibility.
+#     """
+
+#     def __init__(self, marginalize=False, random_state=None):
+
+#         self.rng = np.random.default_rng(random_state)
+
+#         self.marginalize = marginalize
+
+#         table = np.array([
+#             [7.25,  np.inf,                     np.nan,     np.nan],
+#             [7.75,  np.inf,                     np.nan,     np.nan],
+#             [8.25,  np.inf,                     np.nan,     np.nan],
+#             [8.75, -2.9993859455738083,         0.27995724053633797, 0.17794937722098814],
+#             [9.25, -3.642684086117914,          0.32570088749668447, 0.18793129122939778],
+#             [9.75, -4.0887181254382226,         0.5462860677567649,  0.24216890460220508],
+#             [10.25,-4.330978943786744,          1.388940513089568,   0.3040527885191393],
+#             [10.75,-4.783708976480842,          99.0,                0.4471051103722452],
+#             [11.25,-5.5436922065944305,         99.0,                0.5724495783106169],
+#             [11.75,-5.658360812893412,          99.0,                0.5591245877898237],
+#         ])
+
+#         logM          = table[:, 0]
+#         logPhi        = table[:, 1]
+#         logPhi_lerr   = table[:, 2]
+#         logPhi_uerr   = table[:, 3]
+
+#         valid = np.isfinite(logPhi)
+
+#         self.logM = logM[valid]
+#         self.logPhi = logPhi[valid]
+#         self.logPhi_lerr = logPhi_lerr[valid]
+#         self.logPhi_uerr = logPhi_uerr[valid]
+
+#         bad = (
+#             ~np.isfinite(self.logPhi_lerr)
+#             | (self.logPhi_lerr > 10)
+#         )
+
+#         self.logPhi_lerr[bad] = self.logPhi_uerr[bad]
+
+#         # Build initial PDF
+#         self._build_pdf()
+
+#     def __len__(self):
+#         return 1
+
+
+#     def _build_pdf(self):
+
+#         if self.marginalize:
+
+#             z = self.rng.standard_normal(len(self.logPhi))
+
+#             sigma = np.where(
+#                 z < 0,
+#                 self.logPhi_lerr,
+#                 self.logPhi_uerr
+#             )
+
+#             logPhi_draw = self.logPhi + z * sigma
+
+#         else:
+
+#             logPhi_draw = self.logPhi.copy()
+
+#         phi = 10**logPhi_draw
+
+#         norm = trapezoid(phi, self.logM)
+
+#         self.pdf = phi / norm
+
+#         self.cdf = cumulative_trapezoid(
+#             self.pdf,
+#             self.logM,
+#             initial=0
+#         )
+
+#         self.cdf /= self.cdf[-1]
+
+#         self.inverse_cdf = interp1d(
+#             self.cdf,
+#             self.logM,
+#             bounds_error=False,
+#             fill_value=(self.logM[0], self.logM[-1])
+#         )
+
+#     def sample(self, n_samples=1, rebuild_pdf=None):
+#         """
+#         Sample stellar masses from the SMF.
+
+#         Parameters
+#         ----------
+#         n_samples : int
+#             Number of samples.
+
+#         rebuild_pdf : bool or None
+#             If True, redraw a new marginalized SMF realization
+#             before sampling.
+
+#             If False, reuse the current PDF.
+
+#             If None:
+#                 - rebuild automatically when marginalize=True
+#                 - otherwise reuse the fixed PDF
+
+#         Returns
+#         -------
+#         samples_logM : ndarray
+#             Samples in log10(Mstar/Msun).
+#         """
+
+#         if rebuild_pdf is None:
+#             rebuild_pdf = self.marginalize
+
+#         if rebuild_pdf:
+#             self._build_pdf()
+
+#         u = self.rng.random(n_samples)
+#         samples_logM = self.inverse_cdf(u)
+#         return samples_logM
+
+# class MassMetPrior:
+
+
+class SchechterSMF:
+    """
+    Samples stellar masses from a Schechter Function.
+    
+    Parameters
+    ----------
+    logM_star : float
+        The "knee" of the mass function. Typical z~8 value is ~9.8.
+    alpha : float
+        The low-mass power-law slope. Typical z~8 value is ~-2.0 to -2.2.
+        (Note: alpha < -1 means the number of low-mass galaxies diverges,
+        so a low-mass cutoff `logM_min` is physically required).
+    logM_min : float
+        Minimum mass to sample. 7.0 is a reasonable limit for JWST/HST.
+    logM_max : float
+        Maximum mass to sample. The exponential tail will naturally suppress 
+        values past logM_star, but this bounds the grid.
+    n_pts : int
+        Resolution of the internal PDF/CDF grid.
+    random_state : int or None
+        Random seed for reproducibility.
+    """
+    
+    def __init__(self, logM_star=9.8, alpha=-2.0, 
+                 logM_min=7.0, logM_max=11.5, 
+                 n_pts=2000, random_state=None):
+        
+        self.logM_star = logM_star
+        self.alpha = alpha
+        self.logM_min = logM_min
+        self.logM_max = logM_max
+        self.rng = np.random.default_rng(random_state)
+        
+        # Build the PDF and CDF once on initialization
+        self.logM_grid = np.linspace(logM_min, logM_max, n_pts)
+        self._build_interpolators()
+
+    def __len__(self):
+        return 1
+
+    def _schechter_pdf(self, logM):
+        """
+        Unnormalized Schechter function for d(logM).
+        Formula: phi(M) dlogM ~ (M/M*)^(alpha + 1) * exp(-M/M*)
+        """
+        mass_ratio = 10**(logM - self.logM_star)
+        
+        # We calculate the unnormalized shape. 
+        # Constants like phi* and ln(10) drop out when we normalize the PDF later.
+        density = (mass_ratio)**(self.alpha + 1) * np.exp(-mass_ratio)
+        return density
+
+    def _build_interpolators(self):
+        # 1. Evaluate the unnormalized PDF
+        pdf_unnorm = self._schechter_pdf(self.logM_grid)
+        
+        # 2. Normalize to create a true PDF (area under curve = 1)
+        norm = np.trapz(pdf_unnorm, self.logM_grid)
+        self.pdf = pdf_unnorm / norm
+        
+        # 3. Build the CDF
+        self.cdf = cumulative_trapezoid(self.pdf, self.logM_grid, initial=0)
+        self.cdf /= self.cdf[-1] # Force the last value to be exactly 1.0
+        
+        # 4. Create an interpolator to map [0, 1] random numbers back to logM
+        self.inverse_cdf = interp1d(
+            self.cdf, 
+            self.logM_grid, 
+            bounds_error=False, 
+            fill_value=(self.logM_min, self.logM_max)
+        )
+
+    def sample(self, n_samples=1):
+        """
+        Draw random galaxy masses based on the Schechter probability distribution.
+        """
+        u = self.rng.random(n_samples)
+        return self.inverse_cdf(u)
+    

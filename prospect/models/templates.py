@@ -303,7 +303,7 @@ def adjust_realistic_psd_params(parset, tuniv=13.7):
                                                     logpsd_betas=logpsd_betas,
                                                    )
 
-    parset['logpsd_norms'] = logpsd_norms
+    parset['logpsd_norms']['init'] = logpsd_norms
     
     parset = adjust_gmm_stochastic_params(parset,tuniv=tuniv)
 

@@ -950,8 +950,8 @@ def logpsd_norms_to_acf(logpsd_mus=[-3,-2,-1,0,1],logpsd_sigmas=[0.5]*5,logpsd_n
     return acf
 
 def tau_beta_to_psd_norms(logpsd_taus=[-2, 0], logpsd_betas=[0, 2, 1], logpsd_norm1=-8, logpsd_mus=[-3, -2, -1, 0, 1],**extras):
-    taus = np.asarray(taus, dtype=float)
-    betas = np.asarray(betas, dtype=float)
+    taus = np.asarray(logpsd_taus, dtype=float)
+    betas = np.asarray(logpsd_betas, dtype=float)
     mus = np.asarray(logpsd_mus, dtype=float)
     
     assert len(betas) == len(taus) + 1
