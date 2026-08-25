@@ -304,10 +304,83 @@ def adjust_realistic_psd_params(parset, tuniv=13.7):
                                                    )
 
     parset['logpsd_norms']['init'] = logpsd_norms
-    
+
     parset = adjust_gmm_stochastic_params(parset,tuniv=tuniv)
 
     return parset
+
+
+def mass_dependent_psd_params(logmass, logpsd_norm_ref, logpsd_tau_ref,
+                               alpha_norm, alpha_tau, logM_ref=9.5):
+    """
+    Compute per-galaxy PSD parameters from stellar mass and a scaling relation.
+
+    The break timescale grows with mass as t_dyn ∝ M★^{1/3} (dynamical time
+    scaling), and the burst amplitude decreases with mass (more massive galaxies
+    are smoother).  Both slopes are free population-level parameters inferred
+    with SBI.
+
+    Parameters
+    ----------
+    logmass : float
+        Log10 stellar mass formed for this galaxy [M_sun].
+    logpsd_norm_ref : float
+        Log PSD amplitude at the reference mass logM_ref.
+    logpsd_tau_ref : float
+        Log break timescale [log Gyr] at the reference mass logM_ref.
+    alpha_norm : float
+        Slope d(logpsd_norm1)/d(log M★).  Positive → amplitude decreases with
+        mass (more massive = smoother).
+    alpha_tau : float
+        Slope d(logpsd_tau)/d(log M★).  Positive → timescale increases with
+        mass (more massive = longer dynamical time).  Physical prior: ~1/3.
+    logM_ref : float, optional
+        Reference log stellar mass [M_sun]; default 9.5 (near the feedback
+        threshold).
+
+    Returns
+    -------
+    logpsd_norm1 : float
+        PSD amplitude for this galaxy.
+    logpsd_tau : float
+        PSD break timescale for this galaxy [log Gyr].
+    """
+    delta = logmass - logM_ref
+    logpsd_norm1 = logpsd_norm_ref - alpha_norm * delta
+    logpsd_tau   = logpsd_tau_ref  + alpha_tau  * delta
+    return float(logpsd_norm1), float(logpsd_tau)
+
+
+def update_psd_prior_for_mass(parset, logmass, logpsd_norm_ref, logpsd_tau_ref,
+                               alpha_norm, alpha_tau, logM_ref=9.5, tuniv=13.7):
+    """
+    In-place update of a prospector parset's logsfr_ratios prior for one galaxy.
+
+    Computes the per-galaxy PSD parameters from the mass-dependent scaling
+    relation, then recomputes the ACF → covariance → MVN prior chain and
+    writes it back into ``parset['logsfr_ratios']['prior']``.  This must be
+    called after ``parset['logpsd_taus']`` and ``parset['logpsd_norms']``
+    have been initialised (e.g. via a prior call to
+    ``adjust_realistic_psd_params`` at reference-mass values).
+
+    Parameters
+    ----------
+    parset : dict
+        Prospector model config_dict (mutated in place).
+    logmass : float
+        Log10 stellar mass formed for this galaxy [M_sun].
+    logpsd_norm_ref, logpsd_tau_ref, alpha_norm, alpha_tau, logM_ref
+        Scaling relation parameters (see ``mass_dependent_psd_params``).
+    tuniv : float, optional
+        Age of the universe [Gyr]; used to clip the ACF computation.
+    """
+    logpsd_norm1, logpsd_tau = mass_dependent_psd_params(
+        logmass, logpsd_norm_ref, logpsd_tau_ref, alpha_norm, alpha_tau, logM_ref
+    )
+    # Overwrite the break-timescale and normalisation, then recompile the prior.
+    parset['logpsd_taus']['init'] = np.array([logpsd_tau])
+    parset['logpsd_norm1']['init'] = logpsd_norm1
+    adjust_realistic_psd_params(parset, tuniv=tuniv)
 
 
 TemplateLibrary = Directory()
