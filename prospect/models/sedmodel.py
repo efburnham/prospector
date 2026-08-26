@@ -22,6 +22,8 @@ from ..utils.smoothing import smoothspec
 from .Johnson_elines_extinction import *
 from .transforms import logsfr_ratios_to_sfrs
 
+from . import agn_simulator
+
 
 
 __all__ = ["SpecModel", "PolySpecModel", "SplineSpecModel",
@@ -41,10 +43,12 @@ class SpecModel(ProspectorParams):
     and penalties for marginalization over emission line amplitudes.
     """
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, PFS_emis=True, add_AGN=True,**kwargs):
 
         super().__init__(*args, **kwargs)
         self.init_eline_info()
+        self.PFS_emis = PFS_emis
+        self.add_AGN = add_AGN
 
     def _available_parameters(self):
         new_pars = [("sigma_smooth", ""),
@@ -65,7 +69,7 @@ class SpecModel(ProspectorParams):
         return new_pars
 
     def predict(self, theta, obs=None, sps=None, sigma_spec=None,
-                log_stellarmass=None, PFS_emis=False, **extras):
+                log_stellarmass=None, **extras):
         """Given a ``theta`` vector, generate a spectrum, photometry, and any
         extras (e.g. stellar mass), including any calibration effects.
 
@@ -107,12 +111,12 @@ class SpecModel(ProspectorParams):
         self._eline_wave, self._eline_lum = sps.get_galaxy_elines()
 
 	    # If PFS_emis is True, update the emission line luminosities
-        if PFS_emis is True:
+        if self.PFS_emis is True:
             i_log_totmass = self.params.get('logmass',0)
 
             # Calculate the logarithm of the stellar mass if it's not provided
             if log_stellarmass is None:
-                i_log_stellarmass = math.log10(self._mfrac*(10**i_log_totmass))
+                i_log_stellarmass = np.log10(self._mfrac*(10**i_log_totmass))
             else:
                 i_log_stellarmass = log_stellarmass
 
@@ -126,7 +130,7 @@ class SpecModel(ProspectorParams):
             i_sfr = logsfr_ratios_to_sfrs(i_log_totmass,
                                         self.params.get('logsfr_ratios', 0),
                                         self.params.get('agebins', 0))
-            i_log_SFR = math.log10(i_sfr[0])
+            i_log_SFR = np.log10(i_sfr[0])
 
             # ---- following `get_galaxy_elines(self)`
             # Use total mass for the calculation of lsuntimesmass - CHECKTHIS
@@ -192,9 +196,69 @@ class SpecModel(ProspectorParams):
             iw_index = find_nearest(self._eline_wave, 3968.6543)
             self._eline_lum[iw_index] = 10**logNeIII3969/lsuntimesmass
 
+        agn_flux_interp = np.zeros_like(self._spec)
+        if self.add_AGN:
+            print('Adding AGN...')
+            log_m_bh = agn_simulator.return_BH_mass(self.params['logmass'])
+            log_edd_ratio = agn_simulator.return_logEdd_ratio(self.params['zred'], self.params['logmass'])
+            log_L_bol = agn_simulator.return_logLbol(log_m_bh, log_edd_ratio)
+            log_L_x = agn_simulator.return_logLx(log_L_bol)
+            AGN_duty = agn_simulator.return_duty_cycle(log_m_bh, log_L_x)
+            AGN_type = agn_simulator.return_AGN_type(AGN_duty, log_L_x)[0]
+
+            print(
+                f"AGN properties:\n"
+                f"  log(M_BH/Msun): {log_m_bh[0]}\n"
+                f"  log(Edd ratio): {log_edd_ratio[0]}\n"
+                f"  log(L_bol):     {log_L_bol[0]}\n"
+                f"  log(L_X):       {log_L_x[0]}\n"
+                f"  Duty cycle:     {AGN_duty[0]}\n"
+                f"  AGN type:       {AGN_type}"
+            )
+
+            self.log_m_bh = log_m_bh[0]
+            self.log_edd_ratio = log_edd_ratio[0]
+            self.log_L_bol = log_L_bol[0]
+            self.log_L_x = log_L_x[0]
+            self.AGN_duty = AGN_duty[0]
+            self.AGN_type = AGN_type
+
+            if AGN_type != 0:
+                # only add in AGN if it is "on"
+
+                if AGN_type == 1:
+                    print('AGN type I...')
+                    BH_mass = 10**log_m_bh[0]
+                    z = float(self.params['zred'])
+                    L_bol = 10**log_L_bol[0]
+                    log_Ledd = log_edd_ratio[0]
+    
+                    wavelength, f_lambda, lines = agn_simulator.makeQSO(BH_mass, L_bol, z, log_Ledd, return_redshifted=False)
+    
+                if AGN_type == 2:
+                    print('AGN type II...')
+                    BH_mass = 10**log_m_bh[0]
+                    z = self.params['zred']
+                    L_bol = 10**log_L_bol[0]
+                    log_Ledd = log_edd_ratio[0]
+    
+                    wavelength = np.linspace(1800, 10000, 10000)
+                    f_lambda = agn_simulator.return_typeII_emission_lines(log_L_bol, z)
+    
+                print('Adding AGN spec...')
+                # AGN spec, right now, is in units of f_lambda in cgs
+                # it also has IGM attenuation (not the same type as the intrinsic spectrum,smh)
+                # and has been scaled with the luminosity distance
+                # it has not been corrected with the (1+z) term for the stretching of the flux density
+                c = 2.99792458e18  # speed of light in Angstrom/s
+                f_lambda /= (1+self.params['zred']) # accounting for stretching of wavelengths (multiply for Fnu, divide for Flam)
+                f_nu = f_lambda * (wavelength**2) / c # cgs Fnu
+                agn_flux = f_nu / (3631e-23) # maggies Fnu
+                agn_flux_interp = np.interp(self._wave,wavelength,agn_flux)
 
         # Flux normalize
-        self._norm_spec = self._spec * self.flux_norm()
+        self._norm_spec = self._spec * self.flux_norm() # doing this converts the spectrum to maggies, we should add the AGN afterwords
+        self._norm_spec += agn_flux_interp  # adding AGN to the spectrum in Fnu maggies now!
 
         # generate spectrum and photometry for likelihood
         # predict_spec should be called before predict_phot

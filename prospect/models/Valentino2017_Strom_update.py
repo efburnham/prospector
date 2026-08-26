@@ -41,32 +41,32 @@ def predict_L_Hemis(logSFR, Av_stellar):
     ext_mags = extinction.calzetti00(out['wave'], Av_nebular, 4.05)
     
     # -- Halpha -- #
-    logL_Ha_int = logSFR - math.log10(7.9e-42) # K98
-    logL_Ha = logL_Ha_int - math.log10(2.512**ext_mags[0])
+    logL_Ha_int = logSFR - np.log10(7.9e-42) # K98
+    logL_Ha = logL_Ha_int - np.log10(2.512**ext_mags[0])
     
     # -- Hbeta -- #
-    logL_Hb_int = logSFR - math.log10(7.9e-42) - math.log10(2.86) # K98 and Case B
-    logL_Hb = logL_Hb_int - math.log10(2.512**ext_mags[1])   
+    logL_Hb_int = logSFR - np.log10(7.9e-42) - np.log10(2.86) # K98 and Case B
+    logL_Hb = logL_Hb_int - np.log10(2.512**ext_mags[1])   
     
     # -- Hgamma -- K98 and Case B #
-    logL_Hg_int = logSFR - math.log10(7.9e-42) - math.log10(2.86) + math.log10(0.466) 
-    logL_Hg = logL_Hg_int - math.log10(2.512**ext_mags[2])
+    logL_Hg_int = logSFR - np.log10(7.9e-42) - np.log10(2.86) + np.log10(0.466) 
+    logL_Hg = logL_Hg_int - np.log10(2.512**ext_mags[2])
     
     # -- Hdelta -- K98 and Case B #
-    logL_Hd_int = logSFR - math.log10(7.9e-42) - math.log10(2.86) + math.log10(0.256)   
-    logL_Hd = logL_Hd_int - math.log10(2.512**ext_mags[3])
+    logL_Hd_int = logSFR - np.log10(7.9e-42) - np.log10(2.86) + np.log10(0.256)   
+    logL_Hd = logL_Hd_int - np.log10(2.512**ext_mags[3])
     
     # -- Hepsilon luminosity given logSFR/(Msun/yr) and stellar Av.
     #return: log of the Hdelta luminosity in erg/s
     # K98 and Case B
-    logL_He_int = logSFR - math.log10(7.9e-42) - math.log10(2.86) + math.log10(0.158)   
-    logL_He = logL_He_int - math.log10(2.512**ext_mags[4])
+    logL_He_int = logSFR - np.log10(7.9e-42) - np.log10(2.86) + np.log10(0.158)   
+    logL_He = logL_He_int - np.log10(2.512**ext_mags[4])
    
     # -- Predict the Hzeta luminosity given logSFR/(Msun/yr) and stellar Av.
     # -- return: log of the Hdelta luminosity in erg/s   
     # K98 and Case B
-    logL_Hz_int = logSFR - math.log10(7.9e-42) - math.log10(2.86) + math.log10(0.105)
-    logL_Hz = logL_Hz_int - math.log10(2.512**ext_mags[5])
+    logL_Hz_int = logSFR - np.log10(7.9e-42) - np.log10(2.86) + np.log10(0.105)
+    logL_Hz = logL_Hz_int - np.log10(2.512**ext_mags[5])
     
     out['logL'] = np.array([logL_Ha, logL_Hb, logL_Hg, logL_Hd, logL_He, logL_Hz])
     return out['logL']
@@ -80,19 +80,19 @@ def predict_L_OII_tot(logSFR, Av_stellar):
     return: log of the [O II] luminosity in erg/s
     """
     f = 0.76 # stellar to nebular Av ratio.
-    logL_OII_int = logSFR - math.log10(7.9e-42) # K04 actually just K98
+    logL_OII_int = logSFR - np.log10(7.9e-42) # K04 actually just K98
     Av_nebular = Av_stellar/f
     ext_mags = extinction.calzetti00(np.array([3728.0]), Av_nebular, 4.05)
    
-    logL_OII = logL_OII_int - math.log10(2.512**ext_mags[0])
+    logL_OII = logL_OII_int - np.log10(2.512**ext_mags[0])
    
     # -- 3729/3726=1.5(low density limit), 0.35(high density limit)
     # -- https://www.ucolick.org/~simard/phd/root/node21.html
     #lineratio = np.random.uniform(0.35, 1.5)
     # -- Sanders et al. 2016
     lineratio = random.uniform(0.3839, 1.4558)
-    logL_OII_3729 = math.log10(10**logL_OII*(lineratio/(1.+lineratio)))
-    logL_OII_3726 = math.log10(10**logL_OII*(1./(1.+lineratio)))
+    logL_OII_3729 = np.log10(10**logL_OII*(lineratio/(1.+lineratio)))
+    logL_OII_3726 = np.log10(10**logL_OII*(1./(1.+lineratio)))
    
     return logL_OII, logL_OII_3729, logL_OII_3726
    
@@ -114,7 +114,7 @@ def predict_L_OIII5007(logSFR, Av_stellar, logMstar):
     # -- OIII5007/OIII4959 = 2.98 (Storey and Zeippen 2000)
     # -- https://academic.oup.com/mnras/article/312/4/813/1017382
     lineratio = 2.98
-    logL_OIII_4959 = math.log10(10**logL_OIII/lineratio)  
+    logL_OIII_4959 = np.log10(10**logL_OIII/lineratio)  
     
     return logL_OIII, logL_OIII_4959
    
@@ -139,7 +139,7 @@ def predict_L_NeIII3870(logSFR, Av_stellar, logMstar):
    
     # Apply dust
     ext_mags = extinction.calzetti00(np.array([3869.85]), Av_nebular, 4.05)
-    logL_NeIII = logL_NeIII_int - math.log10(2.512**ext_mags[0])
+    logL_NeIII = logL_NeIII_int - np.log10(2.512**ext_mags[0])
    
     return logL_NeIII
    
@@ -157,7 +157,7 @@ def predict_L_NII6585(logSFR, Av_stellar, logMstar):
     # -- NII6583/NII6548 = 3.05 (Storey and Zeippen 2000)
     # -- https://academic.oup.com/mnras/article/312/4/813/1017382
     lineratio = 3.05
-    logL_NII_6548 = math.log10(10**logL_NII/lineratio)   
+    logL_NII_6548 = np.log10(10**logL_NII/lineratio)   
    
     return logL_NII, logL_NII_6548
    
@@ -173,8 +173,8 @@ def predict_L_SII_tot(logSFR, Av_stellar, logMstar):
    
     # -- Sanders et al. 2016, Table 1
     lineratio = random.uniform( 0.4375, 1.4484)
-    logL_SII_6716 = math.log10(10**logL_SII*(lineratio/(1.+lineratio)))
-    logL_SII_6731 = math.log10(10**logL_SII*(1./(1.+lineratio)))
+    logL_SII_6716 = np.log10(10**logL_SII*(lineratio/(1.+lineratio)))
+    logL_SII_6731 = np.log10(10**logL_SII*(1./(1.+lineratio)))
 
     return logL_SII, logL_SII_6716, logL_SII_6731
 
@@ -189,11 +189,11 @@ def predict_L_Ha(logSFR, Av_stellar):
     # Set stellar vs nebular extinction f
     f = 0.76 # stellar to nebular Av ratio.
       
-    logL_Ha_int = logSFR - math.log10(7.9e-42) # K98
+    logL_Ha_int = logSFR - np.log10(7.9e-42) # K98
     Av_nebular = Av_stellar/f
     ext_mags = extinction.calzetti00(np.array([6564.61]), Av_nebular, 4.05)
    
-    logL_Ha = logL_Ha_int - math.log10(2.512**ext_mags[0])
+    logL_Ha = logL_Ha_int - np.log10(2.512**ext_mags[0])
    
     return logL_Ha
    
@@ -205,12 +205,12 @@ def predict_L_Hb(logSFR, Av_stellar):
     return: log of the Hbeta luminosity in erg/s
     """
    
-    logL_Hb_int = logSFR - math.log10(7.9e-42) - math.log10(2.86) # K98 and Case B
+    logL_Hb_int = logSFR - np.log10(7.9e-42) - np.log10(2.86) # K98 and Case B
     f = 0.76
     Av_nebular = Av_stellar/f
     ext_mags = extinction.calzetti00(np.array([4862.68]), Av_nebular, 4.05)
    
-    logL_Hb = logL_Hb_int - math.log10(2.512**ext_mags[0])
+    logL_Hb = logL_Hb_int - np.log10(2.512**ext_mags[0])
    
     return logL_Hb
    
@@ -223,11 +223,11 @@ def predict_L_Hg(logSFR, Av_stellar):
    
     # K98 and Case B
     f = 0.76
-    logL_Hg_int = logSFR - math.log10(7.9e-42) - math.log10(2.86) + math.log10(0.466)
+    logL_Hg_int = logSFR - np.log10(7.9e-42) - np.log10(2.86) + np.log10(0.466)
     Av_nebular = Av_stellar/f
     ext_mags = extinction.calzetti00(np.array([4341.68]), Av_nebular, 4.05)
    
-    logL_Hg = logL_Hg_int - math.log10(2.512**ext_mags[0])
+    logL_Hg = logL_Hg_int - np.log10(2.512**ext_mags[0])
    
     return logL_Hg
    
@@ -240,11 +240,11 @@ def predict_L_Hd(logSFR, Av_stellar):
    
     # K98 and Case B
     f = 0.76
-    logL_Hd_int = logSFR - math.log10(7.9e-42) - math.log10(2.86) + math.log10(0.256)
+    logL_Hd_int = logSFR - np.log10(7.9e-42) - np.log10(2.86) + np.log10(0.256)
     Av_nebular = Av_stellar/f
     ext_mags = extinction.calzetti00(np.array([4102.89]), Av_nebular, 4.05)
    
-    logL_Hd = logL_Hd_int - math.log10(2.512**ext_mags[0])
+    logL_Hd = logL_Hd_int - np.log10(2.512**ext_mags[0])
    
     return logL_Hd
    
@@ -256,11 +256,11 @@ def predict_L_He(logSFR, Av_stellar):
     """
     # K98 and Case B
     f = 0.76
-    logL_He_int = logSFR - math.log10(7.9e-42) - math.log10(2.86) + math.log10(0.158)
+    logL_He_int = logSFR - np.log10(7.9e-42) - np.log10(2.86) + np.log10(0.158)
     Av_nebular = Av_stellar/f
     ext_mags = extinction.calzetti00(np.array([3971.19]), Av_nebular, 4.05)
    
-    logL_He = logL_He_int - math.log10(2.512**ext_mags[0])
+    logL_He = logL_He_int - np.log10(2.512**ext_mags[0])
    
     return logL_He
    
@@ -273,11 +273,11 @@ def predict_L_Hz(logSFR, Av_stellar):
    
    # K98 and Case B
    f = 0.76
-   logL_Hz_int = logSFR - math.log10(7.9e-42) - math.log10(2.86) + math.log10(0.105)
+   logL_Hz_int = logSFR - np.log10(7.9e-42) - np.log10(2.86) + np.log10(0.105)
    Av_nebular = Av_stellar/f
    ext_mags = extinction.calzetti00(np.array([3890.17]), Av_nebular, 4.05)
    
-   logL_Hz = logL_Hz_int - math.log10(2.512**ext_mags[0])
+   logL_Hz = logL_Hz_int - np.log10(2.512**ext_mags[0])
    
    return logL_Hz
    
