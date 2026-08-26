@@ -338,9 +338,12 @@ class FastStepBasis(SSPBasis):
             raise ValueError
 
         mtot = self.params['mass'].sum()
+        # print('converting sfh',flush=True)
         time, sfr, tmax = self.convert_sfh(self.params['agebins'], self.params['mass'])
         self.ssp.params["sfh"] = 3  # Hack to avoid rewriting the superclass
+        # print('setting sfh',flush=True)
         self.ssp.set_tabular_sfh(time, sfr)
+        # print('getting spectrum',flush=True)
         wave, spec = self.ssp.get_spectrum(tage=tmax, peraa=False)
         return wave, spec / mtot, self.ssp.stellar_mass / mtot
 
