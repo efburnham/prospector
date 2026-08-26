@@ -206,7 +206,8 @@ class arbitrary_stochastic_sfh():
         for i in range(num_times):
             for j in range(num_times):
                 tau = times[i] - times[j]
-                cov_matrix[i,j] = self.acf(abs(tau))
+                acf = self.acf(abs(tau))
+                cov_matrix[i,j] = np.atleast_1d(acf)[0]
     
         return cov_matrix
 

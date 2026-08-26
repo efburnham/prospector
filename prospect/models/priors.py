@@ -1050,7 +1050,7 @@ class SchechterSMF:
         pdf_unnorm = self._schechter_pdf(self.logM_grid)
         
         # 2. Normalize to create a true PDF (area under curve = 1)
-        norm = np.trapz(pdf_unnorm, self.logM_grid)
+        norm = np.trapezoid(pdf_unnorm, self.logM_grid)
         self.pdf = pdf_unnorm / norm
         
         # 3. Build the CDF

@@ -1564,7 +1564,7 @@ def norm_pz(zred_mini, zred_maxi, zreds, pdf_zred):
     """
     idx_zrange = np.logical_and(zreds>=zred_mini, zreds<=zred_maxi)
     zreds_inrange = zreds[idx_zrange]
-    p_int = np.trapz(pdf_zred[idx_zrange], zreds_inrange)
+    p_int = np.trapezoid(pdf_zred[idx_zrange], zreds_inrange)
     pdf_zred_inrange = pdf_zred[idx_zrange]/p_int
     invalid = np.where(pdf_zred_inrange<0)
     pdf_zred_inrange[invalid] = 0
