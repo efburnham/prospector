@@ -311,57 +311,88 @@ def adjust_realistic_psd_params(parset, tuniv=13.7):
 
 
 def mass_dependent_psd_params(logmass, logpsd_norm_ref, logpsd_tau_ref,
-                               alpha_norm, alpha_tau, logM_ref=9.5):
+                               logpsd_beta2_ref, alpha_norm, alpha_tau,
+                               alpha_beta, logM_ref=9.5,
+                               logpsd_beta1_ref=7/6, alpha_beta1=1/3):
     """
-    Compute per-galaxy PSD parameters from stellar mass and a scaling relation.
+    Compute per-galaxy PSD parameters from stellar mass and scaling relations.
 
-    The break timescale grows with mass as t_dyn ∝ M★^{1/3} (dynamical time
-    scaling), and the burst amplitude decreases with mass (more massive galaxies
-    are smoother).  Both slopes are free population-level parameters inferred
-    with SBI.
+    All parameters scale linearly with log-mass offset from logM_ref = 9.5:
+
+        logpsd_norm1(M) = logpsd_norm_ref  - alpha_norm  * delta
+        logpsd_tau(M)   = logpsd_tau_ref   + alpha_tau   * delta
+        logpsd_beta1(M) = logpsd_beta1_ref + alpha_beta1 * delta
+        logpsd_beta2(M) = logpsd_beta2_ref + alpha_beta  * delta
+
+    where delta = log10(M★) - logM_ref.
+
+    The short-timescale slope beta1 transitions from 0 at logM=6 (white noise
+    below the break) to beta2 at logM=12 (single power law; break disappears).
+
+    Physical motivation
+    -------------------
+    * alpha_tau ≈ 1/3  — mean-density approximation: tau ~ M^{1/3} (constant
+                          mean density), monotonically increasing with mass,
+                          consistent with Iyer+2020 PSD results
+    * alpha_norm > 0   — short-timescale white-noise floor *decreases* with mass
+    * alpha_beta > 0   — PSD slope above the break is steeper at *higher* mass
+    * alpha_beta1 > 0  — beta1 increases with mass, converging to beta2 at logM=12
 
     Parameters
     ----------
     logmass : float
-        Log10 stellar mass formed for this galaxy [M_sun].
+        Log10 stellar mass for this galaxy [M_sun].
     logpsd_norm_ref : float
-        Log PSD amplitude at the reference mass logM_ref.
+        Log PSD white-noise floor at logM_ref [log (dex² Gyr)].
     logpsd_tau_ref : float
-        Log break timescale [log Gyr] at the reference mass logM_ref.
+        Log break timescale at logM_ref [log Gyr].
+    logpsd_beta2_ref : float
+        PSD slope above the break at logM_ref (dimensionless, > 0).
     alpha_norm : float
-        Slope d(logpsd_norm1)/d(log M★).  Positive → amplitude decreases with
-        mass (more massive = smoother).
+        Positive → white-noise floor *decreases* with mass.
+        Effective scaling: norm1 = norm_ref − alpha_norm×Δ.
     alpha_tau : float
-        Slope d(logpsd_tau)/d(log M★).  Positive → timescale increases with
-        mass (more massive = longer dynamical time).  Physical prior: ~1/3.
+        d(logpsd_tau)/d(log M★). Physical prior: ~1/3 (mean-density approx).
+    alpha_beta : float
+        d(logpsd_beta2)/d(log M★).  Positive → steeper long-timescale slope
+        at *higher* mass.
     logM_ref : float, optional
-        Reference log stellar mass [M_sun]; default 9.5 (near the feedback
-        threshold).
+        Pivot log stellar mass [M_sun]; default 9.5.
+    logpsd_beta1_ref : float, optional
+        Short-timescale PSD slope at logM_ref; default 7/6 ≈ 1.167
+        (anchors beta1=0 at logM=6, beta1=2 at logM=12).
+    alpha_beta1 : float, optional
+        d(logpsd_beta1)/d(log M★); default 1/3.
 
     Returns
     -------
     logpsd_norm1 : float
-        PSD amplitude for this galaxy.
+        PSD white-noise floor for this galaxy.
     logpsd_tau : float
         PSD break timescale for this galaxy [log Gyr].
+    logpsd_beta1 : float
+        PSD slope below the break for this galaxy.
+    logpsd_beta2 : float
+        PSD slope above the break for this galaxy.
     """
     delta = logmass - logM_ref
-    logpsd_norm1 = logpsd_norm_ref - alpha_norm * delta
-    logpsd_tau   = logpsd_tau_ref  + alpha_tau  * delta
-    return float(logpsd_norm1), float(logpsd_tau)
+    logpsd_norm1  = logpsd_norm_ref  - alpha_norm  * delta
+    logpsd_tau    = logpsd_tau_ref   + alpha_tau   * delta
+    logpsd_beta1  = logpsd_beta1_ref + alpha_beta1 * delta
+    logpsd_beta2  = logpsd_beta2_ref + alpha_beta  * delta
+    return float(logpsd_norm1), float(logpsd_tau), float(logpsd_beta1), float(logpsd_beta2)
 
 
 def update_psd_prior_for_mass(parset, logmass, logpsd_norm_ref, logpsd_tau_ref,
-                               alpha_norm, alpha_tau, logM_ref=9.5, tuniv=13.7):
+                               logpsd_beta2_ref, alpha_norm, alpha_tau,
+                               alpha_beta, logM_ref=9.5, tuniv=13.7,
+                               logpsd_beta1_ref=7/6, alpha_beta1=1/3):
     """
     In-place update of a prospector parset's logsfr_ratios prior for one galaxy.
 
     Computes the per-galaxy PSD parameters from the mass-dependent scaling
     relation, then recomputes the ACF → covariance → MVN prior chain and
-    writes it back into ``parset['logsfr_ratios']['prior']``.  This must be
-    called after ``parset['logpsd_taus']`` and ``parset['logpsd_norms']``
-    have been initialised (e.g. via a prior call to
-    ``adjust_realistic_psd_params`` at reference-mass values).
+    writes it back into ``parset['logsfr_ratios']['prior']``.
 
     Parameters
     ----------
@@ -369,16 +400,26 @@ def update_psd_prior_for_mass(parset, logmass, logpsd_norm_ref, logpsd_tau_ref,
         Prospector model config_dict (mutated in place).
     logmass : float
         Log10 stellar mass formed for this galaxy [M_sun].
-    logpsd_norm_ref, logpsd_tau_ref, alpha_norm, alpha_tau, logM_ref
-        Scaling relation parameters (see ``mass_dependent_psd_params``).
+    logpsd_norm_ref, logpsd_tau_ref, logpsd_beta2_ref : float
+        Reference-mass PSD parameters (see ``mass_dependent_psd_params``).
+    alpha_norm, alpha_tau, alpha_beta : float
+        Mass scaling slopes (see ``mass_dependent_psd_params``).
+    logM_ref : float, optional
+        Pivot log stellar mass [M_sun]; default 9.5.
     tuniv : float, optional
         Age of the universe [Gyr]; used to clip the ACF computation.
+    logpsd_beta1_ref : float, optional
+        Short-timescale slope at logM_ref; default 7/6.
+    alpha_beta1 : float, optional
+        d(beta1)/d(logM); default 1/3.
     """
-    logpsd_norm1, logpsd_tau = mass_dependent_psd_params(
-        logmass, logpsd_norm_ref, logpsd_tau_ref, alpha_norm, alpha_tau, logM_ref
+    logpsd_norm1, logpsd_tau, logpsd_beta1, logpsd_beta2 = mass_dependent_psd_params(
+        logmass, logpsd_norm_ref, logpsd_tau_ref, logpsd_beta2_ref,
+        alpha_norm, alpha_tau, alpha_beta, logM_ref,
+        logpsd_beta1_ref=logpsd_beta1_ref, alpha_beta1=alpha_beta1
     )
-    # Overwrite the break-timescale and normalisation, then recompile the prior.
-    parset['logpsd_taus']['init'] = np.array([logpsd_tau])
+    parset['logpsd_betas']['init'] = np.array([logpsd_beta1, logpsd_beta2])
+    parset['logpsd_taus']['init']  = np.array([logpsd_tau])
     parset['logpsd_norm1']['init'] = logpsd_norm1
     adjust_realistic_psd_params(parset, tuniv=tuniv)
 

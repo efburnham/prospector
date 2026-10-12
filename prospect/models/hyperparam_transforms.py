@@ -200,16 +200,9 @@ class arbitrary_stochastic_sfh():
     def acf_to_covariance(self,times):
         """Computes the covariance matrix for a new time grid given a PSD."""
 
-        num_times = len(times)
-        cov_matrix = np.zeros((num_times,num_times))
-
-        for i in range(num_times):
-            for j in range(num_times):
-                tau = times[i] - times[j]
-                acf = self.acf(abs(tau))
-                cov_matrix[i,j] = np.atleast_1d(acf)[0]
-    
-        return cov_matrix
+        times = np.asarray(times)
+        lags = np.abs(times[:, None] - times[None, :])   # (N, N)
+        return self.acf(lags.ravel()).reshape(lags.shape)
 
 
     def get_logsfr_covariance(self, agebins):

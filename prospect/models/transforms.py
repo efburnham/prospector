@@ -778,7 +778,7 @@ def logsfr_ratios_to_masses_sloped(logmass=None, logsfr_ratios=None, agebins=Non
     sfr_new = 10**(logsfr_norm_slope + np.log10(sfr_norm))
     sfr_new = np.interp(times*1e6,t_fine,sfr_new)
     
-    sfr_new_massnorm = sfr_new/np.trapezoid(sfr_new,x=times*1e6)
+    sfr_new_massnorm = sfr_new/(np.trapezoid if hasattr(np, 'trapezoid') else np.trapz)(sfr_new,x=times*1e6)
     sfr_new = sfr_new_massnorm * 10**logmass
     mass_new = sfr_new * dt
     return mass_new

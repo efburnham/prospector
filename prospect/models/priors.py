@@ -305,8 +305,8 @@ class MultiVariateNormal(Prior):
         return (-np.inf, np.inf)
     
     def sample(self, nsample=None, **kwargs):
-        prior = scipy.stats.multivariate_normal(mean=self.loc, cov=self.scale)
-        return prior.rvs(size = nsample)
+        size = nsample if nsample is not None else None
+        return np.random.multivariate_normal(mean=self.loc, cov=self.scale, size=size)
 
     def unit_transform(self, x, **kwargs):
         """Go from a value of the CDF (between 0 and 1) to the corresponding
@@ -1050,7 +1050,7 @@ class SchechterSMF:
         pdf_unnorm = self._schechter_pdf(self.logM_grid)
         
         # 2. Normalize to create a true PDF (area under curve = 1)
-        norm = np.trapezoid(pdf_unnorm, self.logM_grid)
+        norm = (np.trapezoid if hasattr(np, 'trapezoid') else np.trapz)(pdf_unnorm, self.logM_grid)
         self.pdf = pdf_unnorm / norm
         
         # 3. Build the CDF
